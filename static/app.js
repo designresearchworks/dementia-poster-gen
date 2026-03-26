@@ -110,6 +110,9 @@ let promptLastSavedState = null;
 let busyOverlayDismissed = false;
 let busyOverlayMode = 'idle';
 const selectedImages = new Set();
+const MODEL_ASPECT_RATIOS = {
+  'replicate:openai/gpt-image-1.5': ['1:1', '3:2', '2:3'],
+};
 
 // --- Init ---
 async function init() {
@@ -140,6 +143,7 @@ async function init() {
   btnSettings.addEventListener('click', openSettingsModal);
   btnSettingsClose.addEventListener('click', closeSettingsModal);
   settingsBackdrop.addEventListener('click', closeSettingsModal);
+  settingsImageModel.addEventListener('change', () => syncAspectRatioOptions(settingsImageModel.value));
   btnSettingsSave.addEventListener('click', saveSettings);
   btnDebugDetails.addEventListener('click', openDebugModal);
   btnDebugClearInline.addEventListener('click', clearErrors);
@@ -314,6 +318,7 @@ async function loadSettings() {
   settingsTextModel.value = textModel;
   settingsImageModel.value = imageModel;
   settingsDebugMode.checked = debugMode;
+  syncAspectRatioOptions(imageModel);
   refreshDebugBar();
 }
 
@@ -395,6 +400,7 @@ function openSettingsModal() {
   settingsTextModel.value = textModel;
   settingsImageModel.value = imageModel;
   settingsDebugMode.checked = debugMode;
+  syncAspectRatioOptions(settingsImageModel.value);
   settingsModal.hidden = false;
 }
 
@@ -588,6 +594,7 @@ async function saveSettings() {
   debugMode = Boolean(result.debug_mode);
   textModel = result.text_model || textModel;
   imageModel = result.image_model || imageModel;
+  syncAspectRatioOptions(imageModel);
   await loadPipelines();
   closeSettingsModal();
   updateStatus('idle', 'Idle', 'Settings saved.');
@@ -824,6 +831,7 @@ async function restoreLibraryItem(filename) {
   descriptionEditor.value = item.description || '';
   imageModel = item.image_model || imageModel || 'replicate:google/nano-banana-pro';
   settingsImageModel.value = imageModel;
+  syncAspectRatioOptions(imageModel, item.aspect_ratio || aspectRatioSelect.value || '3:4');
   aspectRatioSelect.value = item.aspect_ratio || aspectRatioSelect.value || '3:4';
 
   showResults(item.description, item.poster_filename);
@@ -850,6 +858,7 @@ function applyStatusState(data) {
   if (data.image_model) {
     imageModel = data.image_model;
     settingsImageModel.value = imageModel;
+    syncAspectRatioOptions(imageModel, data.aspect_ratio || aspectRatioSelect.value);
   }
   if (data.aspect_ratio) {
     aspectRatioSelect.value = data.aspect_ratio;
@@ -966,6 +975,17 @@ function renderSelection() {
 
 function updateSelectionSummary() {
   selectionCount.textContent = `${selectedImages.size} selected`;
+}
+
+function syncAspectRatioOptions(modelId, preferredValue = null) {
+  const allowed = MODEL_ASPECT_RATIOS[modelId] || ['1:1', '3:4', '4:3', '9:16', '16:9'];
+  const fallback = allowed.includes('3:4') ? '3:4' : allowed[0];
+  const selected = allowed.includes(preferredValue) ? preferredValue : (allowed.includes(aspectRatioSelect.value) ? aspectRatioSelect.value : fallback);
+
+  aspectRatioSelect.innerHTML = allowed.map(value => `
+    <option value="${value}">${value}</option>
+  `).join('');
+  aspectRatioSelect.value = selected;
 }
 
 function updateRunButtonState() {

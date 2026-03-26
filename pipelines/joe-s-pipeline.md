@@ -1,4 +1,4 @@
-# Joe S Pipeline
+# Social Media Ad
 
 ## Interpretation Prompt
 

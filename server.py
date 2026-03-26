@@ -67,13 +67,18 @@ IMAGE_MODELS = {
         "provider": "replicate",
         "model": "black-forest-labs/flux-2-pro",
     },
+    "replicate:openai/gpt-image-1.5": {
+        "label": "GPT Image 1.5 (Replicate)",
+        "provider": "replicate",
+        "model": "openai/gpt-image-1.5",
+    },
     "openrouter:google/gemini-3.1-flash-image-preview": {
         "label": "Gemini 3.1 Flash Image Preview (OpenRouter)",
         "provider": "openrouter",
         "model": "google/gemini-3.1-flash-image-preview",
     },
 }
-ASPECT_RATIOS = {"1:1", "3:4", "4:3", "9:16", "16:9"}
+ASPECT_RATIOS = {"1:1", "3:2", "2:3", "3:4", "4:3", "9:16", "16:9"}
 
 # --- Default prompts ---
 
@@ -296,6 +301,30 @@ def format_replicate_error(data: dict) -> str:
     return "\n".join(lines)
 
 
+def format_replicate_http_error(exc: httpx.HTTPStatusError) -> str:
+    status_code = exc.response.status_code
+    try:
+        data = exc.response.json()
+    except ValueError:
+        data = None
+
+    if isinstance(data, dict):
+        detail = data.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return f"Replicate request failed ({status_code}): {detail.strip()}"
+        if detail is not None:
+            return f"Replicate request failed ({status_code}): {json.dumps(detail, ensure_ascii=True)}"
+        error = data.get("error")
+        if isinstance(error, str) and error.strip():
+            return f"Replicate request failed ({status_code}): {error.strip()}"
+        return f"Replicate request failed ({status_code}): {json.dumps(data, ensure_ascii=True)}"
+
+    body_text = exc.response.text.strip()
+    if body_text:
+        return f"Replicate request failed ({status_code}): {body_text}"
+    return f"Replicate request failed ({status_code})"
+
+
 def get_default_pipeline_id() -> str:
     return ensure_config()["default_pipeline_id"]
 
@@ -379,7 +408,7 @@ pipeline_state = {
     "started_at": None,
     "source_images": [],
     "pipeline_id": current_pipeline_id,
-    "image_model": "replicate:google/nano-banana-pro",
+    "image_model": get_default_image_model(),
     "aspect_ratio": "3:4",
 }
 
@@ -620,12 +649,15 @@ async def call_replicate(prompt: str, model: str, aspect_ratio: str) -> str:
 
     async with httpx.AsyncClient(timeout=120) as client:
         # Try sync mode first (waits up to 60s)
-        resp = await client.post(
-            f"https://api.replicate.com/v1/models/{model}/predictions",
-            headers=headers,
-            json=payload,
-        )
-        resp.raise_for_status()
+        try:
+            resp = await client.post(
+                f"https://api.replicate.com/v1/models/{model}/predictions",
+                headers=headers,
+                json=payload,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise Exception(format_replicate_http_error(exc)) from exc
         data = resp.json()
 
         # If not yet succeeded, poll
@@ -932,6 +964,7 @@ async def update_settings(body: dict):
     current_pipeline_id = pipeline_id
     current_pipeline = load_pipeline(current_pipeline_id)
     pipeline_state["pipeline_id"] = current_pipeline_id
+    pipeline_state["image_model"] = get_default_image_model()
 
     return {
         "ok": True,
