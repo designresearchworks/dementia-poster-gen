@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dementia Design Poster Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;1,8..60,400&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="pipeline-flow">
+    <div class="card card-status status-monitor" id="status-card">
+      <div class="card-header">
+        <div class="status-indicator" id="status-indicator">
+          <span class="status-dot" id="status-dot"></span>
+          <span class="status-text" id="status-text">Idle</span>
+        </div>
+        <button id="btn-settings" class="btn-icon" title="Settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+      <p class="status-message" id="status-message"></p>
+      <div id="debug-bar" class="debug-bar" hidden>
+        <span id="debug-summary" class="debug-summary">Debug mode on</span>
+        <div class="debug-actions">
+          <button id="btn-debug-details" class="btn-text" type="button">Details</button>
+          <button id="btn-debug-clear-inline" class="btn-text" type="button">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="stage-card" id="stage-input">
+      <div class="stage-marker">1</div>
+      <div class="card card-images">
+        <div class="card-header">
+          <h2>Watch Folder / Webcam Input</h2>
+          <button id="btn-refresh" class="btn-icon" title="Refresh images">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+        </div>
+        <p class="card-hint">Drop images into <code>./watch</code> folder, then refresh.</p>
+        <div class="camera-panel">
+          <div class="camera-preview">
+            <video id="camera-video" autoplay playsinline muted hidden></video>
+            <div id="camera-placeholder" class="camera-placeholder">Camera preview appears here</div>
+          </div>
+          <div class="camera-actions">
+            <button id="btn-camera-start" class="btn-secondary">Start Camera</button>
+            <button id="btn-camera-capture" class="btn-secondary" disabled>Capture to Watch Folder</button>
+          </div>
+          <p id="camera-status" class="camera-status">Use the browser camera to save a snapshot into <code>./watch</code>.</p>
+        </div>
+        <div class="selection-toolbar">
+          <span id="selection-count" class="selection-count">0 selected</span>
+          <div class="selection-actions">
+            <button id="btn-open-image-picker" class="btn-secondary" type="button">Select Images</button>
+            <button id="btn-select-all" class="btn-text" type="button">Select all</button>
+            <button id="btn-clear-selection" class="btn-text" type="button">Clear</button>
+          </div>
+        </div>
+        <div id="selection-preview" class="selection-preview">
+          <p class="empty-state">No images selected.</p>
+        </div>
+        <div class="stage-actions">
+          <button id="btn-run" class="btn-run">Run Pipeline</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="stage-card" id="stage-interpretation">
+      <div class="stage-marker">2</div>
+      <div class="card card-prompt">
+        <div class="card-header">
+          <h2>Interpretation Prompt</h2>
+          <button id="btn-open-pipeline-editor" class="btn-text" type="button">Pipeline Editor</button>
+        </div>
+        <p class="card-hint">Choose a Markdown pipeline, then edit the interpretation prompt used on the selected source images.</p>
+        <select id="pipeline-select" class="pipeline-select"></select>
+        <p id="pipeline-path" class="pipeline-path"></p>
+        <textarea id="prompt-interpretation" rows="6" spellcheck="false"></textarea>
+      </div>
+    </section>
+
+    <section class="stage-card" id="stage-description">
+      <div class="stage-marker">3</div>
+      <div class="card card-description" id="description-card">
+        <h2>Description</h2>
+        <p class="card-hint">Claude writes the first draft. You can edit it before generating the final output.</p>
+        <textarea id="description-editor" class="description-editor" rows="8" spellcheck="true" placeholder="Run interpretation to generate a description draft."></textarea>
+      </div>
+    </section>
+
+    <section class="stage-card" id="stage-image-prompt">
+      <div class="stage-marker">4</div>
+      <div class="card card-prompt">
+        <h2>Image Generation Prompt</h2>
+        <p class="card-hint">Used for this run and embedded in the output PNG. Use <code>{description}</code> as placeholder.</p>
+        <textarea id="prompt-image" rows="6" spellcheck="false"></textarea>
+      </div>
+    </section>
+
+    <div class="card card-library">
+      <div class="card-header">
+        <h2>Poster Library</h2>
+      </div>
+      <p class="card-hint">Click a saved poster to reload it into the results panel.</p>
+      <div id="library-grid" class="library-grid">
+        <p class="empty-state">No generated posters yet.</p>
+      </div>
+    </div>
+  </main>
+
+  <div id="settings-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="settings-backdrop"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="card modal-card">
+        <div class="card-header">
+          <h2 id="settings-title">Settings</h2>
+          <button id="btn-settings-close" class="btn-icon" title="Close settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p class="card-hint">Choose which pipeline should load by default.</p>
+        <label class="settings-label" for="settings-default-pipeline">Default pipeline</label>
+        <select id="settings-default-pipeline" class="pipeline-select"></select>
+        <label class="settings-toggle">
+          <input id="settings-debug-mode" type="checkbox">
+          <span>Enable debug mode</span>
+        </label>
+        <div class="modal-actions">
+          <button id="btn-settings-save" class="btn-run">Save Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="debug-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="debug-backdrop"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="debug-title">
+      <div class="card modal-card">
+        <div class="card-header">
+          <h2 id="debug-title">Error Details</h2>
+          <div class="card-controls">
+            <button id="btn-debug-clear" class="btn-text" type="button">Clear Errors</button>
+            <button id="btn-debug-close" class="btn-icon" title="Close error details">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="debug-list" class="debug-list">
+          <p class="empty-state">No errors logged.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="image-picker-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="image-picker-backdrop"></div>
+    <div class="modal-dialog modal-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="image-picker-title">
+      <div class="card modal-card">
+        <div class="card-header">
+          <h2 id="image-picker-title">Select Images</h2>
+          <button id="btn-image-picker-close" class="btn-icon" title="Close image picker">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p class="card-hint">Newest images appear first. Select multiple images or delete ones you no longer need.</p>
+        <div id="image-picker-grid" class="image-grid image-picker-grid">
+          <p class="empty-state">No images found.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="output-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="output-backdrop"></div>
+    <div class="modal-dialog modal-dialog-image" role="dialog" aria-modal="true" aria-labelledby="output-title">
+      <div class="card modal-card image-modal-card">
+        <div class="card-header">
+          <h2 id="output-title">Generated Output</h2>
+          <button id="btn-output-close" class="btn-icon" title="Close output preview">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div id="output-modal-body" class="output-modal-body">
+          <p class="empty-state">No generated output available.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="pipeline-editor-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="pipeline-editor-backdrop"></div>
+    <div class="modal-dialog modal-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="pipeline-editor-title">
+      <div class="card modal-card pipeline-editor-card">
+        <div class="card-header">
+          <h2 id="pipeline-editor-title">Pipeline Editor</h2>
+          <button id="btn-pipeline-editor-close" class="btn-icon" title="Close pipeline editor">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p class="card-hint">Edit a pipeline Markdown file directly or create a new one from boilerplate.</p>
+        <div class="pipeline-editor-toolbar">
+          <div class="pipeline-editor-select-group">
+            <label class="settings-label" for="pipeline-editor-select">Pipeline</label>
+            <select id="pipeline-editor-select" class="pipeline-select"></select>
+          </div>
+          <div class="pipeline-editor-create-group">
+            <label class="settings-label" for="new-pipeline-name">New pipeline</label>
+            <div class="pipeline-editor-create-row">
+              <input id="new-pipeline-name" class="text-input" type="text" placeholder="New pipeline name">
+              <button id="btn-create-pipeline" class="btn-secondary" type="button">Add New</button>
+            </div>
+          </div>
+        </div>
+        <p id="pipeline-editor-path" class="pipeline-path"></p>
+        <textarea id="pipeline-editor-textarea" class="pipeline-editor-textarea" spellcheck="false"></textarea>
+        <div class="modal-actions">
+          <button id="btn-pipeline-editor-save" class="btn-run" type="button">Save Pipeline</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
