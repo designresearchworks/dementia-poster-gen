@@ -15,7 +15,7 @@ from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -472,6 +472,24 @@ def save_base64_image(data_url: str, filename_prefix: str = "webcam") -> str:
     with open(output_path, "wb") as f:
         f.write(image_bytes)
 
+    return filename
+
+
+async def save_uploaded_image(file: UploadFile) -> str:
+    original_name = file.filename or ""
+    extension = Path(original_name).suffix.lower()
+    if extension not in IMAGE_EXTENSIONS:
+        raise HTTPException(400, "Unsupported image type")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(400, "Uploaded file is empty")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"upload_{timestamp}{extension}"
+    output_path = WATCH_DIR / filename
+    with open(output_path, "wb") as f:
+        f.write(contents)
     return filename
 
 
@@ -953,6 +971,12 @@ async def capture_image(body: dict):
         raise HTTPException(400, "No image provided")
 
     filename = save_base64_image(data_url)
+    return {"ok": True, "filename": filename}
+
+
+@app.post("/api/upload")
+async def upload_image(file: UploadFile = File(...)):
+    filename = await save_uploaded_image(file)
     return {"ok": True, "filename": filename}
 
 

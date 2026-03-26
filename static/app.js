@@ -8,6 +8,7 @@ const API = {
   settings: '/api/settings',
   errors: '/api/errors',
   capture: '/api/capture',
+  upload: '/api/upload',
   run: '/api/run',
   status: '/api/status',
   results: '/api/results',
@@ -21,6 +22,8 @@ const imagePickerBackdrop = document.getElementById('image-picker-backdrop');
 const btnImagePickerClose = document.getElementById('btn-image-picker-close');
 const imagePickerGrid = document.getElementById('image-picker-grid');
 const btnOpenPipelineEditor = document.getElementById('btn-open-pipeline-editor');
+const imageUploadInput = document.getElementById('image-upload-input');
+const btnUploadImage = document.getElementById('btn-upload-image');
 const pipelineEditorModal = document.getElementById('pipeline-editor-modal');
 const pipelineEditorBackdrop = document.getElementById('pipeline-editor-backdrop');
 const btnPipelineEditorClose = document.getElementById('btn-pipeline-editor-close');
@@ -118,6 +121,7 @@ async function init() {
 
   btnRefresh.addEventListener('click', loadImages);
   btnOpenImagePicker.addEventListener('click', openImagePickerModal);
+  btnUploadImage.addEventListener('click', uploadSelectedImage);
   btnImagePickerClose.addEventListener('click', closeImagePickerModal);
   imagePickerBackdrop.addEventListener('click', closeImagePickerModal);
   btnOpenPipelineEditor.addEventListener('click', openPipelineEditorModal);
@@ -222,6 +226,35 @@ async function loadImages() {
   });
 
   renderSelection();
+}
+
+async function uploadSelectedImage() {
+  const file = imageUploadInput.files?.[0];
+  if (!file) {
+    updateStatus('error', 'Error', 'Choose an image to upload first.');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  btnUploadImage.disabled = true;
+
+  const result = await fetchJSON(API.upload, {
+    method: 'POST',
+    body: formData,
+  });
+
+  btnUploadImage.disabled = false;
+  if (!result || !result.ok) {
+    updateStatus('error', 'Error', 'Failed to upload image.');
+    return;
+  }
+
+  imageUploadInput.value = '';
+  await loadImages();
+  selectedImages.add(result.filename);
+  renderSelection();
+  updateStatus('idle', 'Idle', `${result.filename} uploaded to watch folder.`);
 }
 
 async function loadLibrary() {

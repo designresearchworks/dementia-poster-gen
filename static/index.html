@@ -47,6 +47,10 @@
           <h2>Watch Folder / Webcam Input</h2>
         </div>
         <p class="card-hint">Drop images into <code>./watch</code> folder. The app refreshes automatically.</p>
+        <div class="upload-panel">
+          <input id="image-upload-input" class="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
+          <button id="btn-upload-image" class="btn-secondary" type="button">Upload Image</button>
+        </div>
         <div class="camera-panel">
           <div class="camera-preview">
             <video id="camera-video" autoplay playsinline muted hidden></video>

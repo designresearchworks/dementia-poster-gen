@@ -225,6 +225,20 @@ body {
   background: linear-gradient(180deg, #fcfaf7 0%, #f4ede6 100%);
 }
 
+.upload-panel {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.file-input {
+  flex: 1 1 16rem;
+  min-width: 0;
+  font: inherit;
+}
+
 .camera-preview {
   position: relative;
   aspect-ratio: 4 / 3;

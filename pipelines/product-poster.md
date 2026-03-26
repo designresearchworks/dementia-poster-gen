@@ -6,7 +6,7 @@ Examine these images carefully. They contain handwritten notes, sketches, and id
 
 ## Diversity
 Remember that not everyone in the world (and not everyone with dementia) is white and middle class, represent the diversity of the world, in parituclar the UK.
-Focus on describing the product, how it will work, and what makes it unique
+Focus on describing the product, how it will work, and what makes it unique. You can say what group it is marketed at, if it makes a difference.
 
 ## Rules
 No markdown
@@ -18,7 +18,7 @@ Create a professional product poster for the following product designed for peop
 
 {description}
 
-Create in the style of the UK NHS.
+Create in the style of a Google product.
 
 ## Rules
 Remember that not everyone in the world is white and middle class, represent the diversity of the UK.
