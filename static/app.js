@@ -15,7 +15,6 @@ const API = {
 };
 
 // --- DOM refs ---
-const selectionPreview = document.getElementById('selection-preview');
 const btnOpenImagePicker = document.getElementById('btn-open-image-picker');
 const imagePickerModal = document.getElementById('image-picker-modal');
 const imagePickerBackdrop = document.getElementById('image-picker-backdrop');
@@ -33,6 +32,8 @@ const btnCreatePipeline = document.getElementById('btn-create-pipeline');
 const btnPipelineEditorSave = document.getElementById('btn-pipeline-editor-save');
 const outputModal = document.getElementById('output-modal');
 const outputBackdrop = document.getElementById('output-backdrop');
+const btnOutputPrev = document.getElementById('btn-output-prev');
+const btnOutputNext = document.getElementById('btn-output-next');
 const btnOutputClose = document.getElementById('btn-output-close');
 const outputModalBody = document.getElementById('output-modal-body');
 const cameraVideo = document.getElementById('camera-video');
@@ -43,6 +44,7 @@ const btnCameraCapture = document.getElementById('btn-camera-capture');
 const selectionCount = document.getElementById('selection-count');
 const btnSelectAll = document.getElementById('btn-select-all');
 const btnClearSelection = document.getElementById('btn-clear-selection');
+const aspectRatioSelect = document.getElementById('aspect-ratio-select');
 const pipelineSelect = document.getElementById('pipeline-select');
 const pipelinePath = document.getElementById('pipeline-path');
 const promptInterp = document.getElementById('prompt-interpretation');
@@ -50,11 +52,17 @@ const promptImage = document.getElementById('prompt-image');
 const btnRun = document.getElementById('btn-run');
 const btnRefresh = document.getElementById('btn-refresh');
 const btnSettings = document.getElementById('btn-settings');
+const busyOverlay = document.getElementById('busy-overlay');
+const busyOverlayPanel = document.getElementById('busy-overlay-panel');
+const busyOverlayTitle = document.getElementById('busy-overlay-title');
+const busyOverlayMessage = document.getElementById('busy-overlay-message');
 const settingsModal = document.getElementById('settings-modal');
 const settingsBackdrop = document.getElementById('settings-backdrop');
 const btnSettingsClose = document.getElementById('btn-settings-close');
 const btnSettingsSave = document.getElementById('btn-settings-save');
 const settingsDefaultPipeline = document.getElementById('settings-default-pipeline');
+const settingsTextModel = document.getElementById('settings-text-model');
+const settingsImageModel = document.getElementById('settings-image-model');
 const settingsDebugMode = document.getElementById('settings-debug-mode');
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
@@ -84,10 +92,20 @@ let defaultPipelineId = null;
 let debugMode = false;
 let errorItems = [];
 let currentPosterFilename = null;
+let textModel = 'anthropic/claude-opus-4.6';
+let imageModel = 'replicate:google/nano-banana-pro';
 let pipelineEditorCurrentId = null;
 let pipelineEditorSaveTimeout = null;
 let pipelineEditorIsLoading = false;
 let pipelineEditorLastSavedContent = '';
+let imagesRefreshInterval = null;
+let pipelineStatus = 'idle';
+let promptSaveTimeout = null;
+let promptSaveInFlight = false;
+let promptSavePending = false;
+let promptLastSavedState = null;
+let busyOverlayDismissed = false;
+let busyOverlayMode = 'idle';
 const selectedImages = new Set();
 
 // --- Init ---
@@ -109,6 +127,9 @@ async function init() {
   pipelineEditorTextarea.addEventListener('input', schedulePipelineEditorAutosave);
   btnCreatePipeline.addEventListener('click', createPipelineFromEditor);
   btnPipelineEditorSave.addEventListener('click', savePipelineSource);
+  busyOverlay.addEventListener('click', handleBusyOverlayClick);
+  btnOutputPrev.addEventListener('click', showPreviousOutput);
+  btnOutputNext.addEventListener('click', showNextOutput);
   btnOutputClose.addEventListener('click', closeOutputModal);
   outputBackdrop.addEventListener('click', closeOutputModal);
   btnRun.addEventListener('click', runPipeline);
@@ -126,6 +147,8 @@ async function init() {
   btnSelectAll.addEventListener('click', selectAllImages);
   btnClearSelection.addEventListener('click', clearSelection);
   pipelineSelect.addEventListener('change', () => loadPipeline(pipelineSelect.value));
+  promptInterp.addEventListener('input', schedulePromptAutosave);
+  promptImage.addEventListener('input', schedulePromptAutosave);
   descriptionEditor.addEventListener('input', () => {
     if (!descriptionEditor.readOnly) return;
   });
@@ -141,6 +164,9 @@ async function init() {
   if (status && !['idle', 'complete', 'error'].includes(status.status)) {
     startPolling();
   }
+
+  startImageAutoRefresh();
+  updateRunButtonState();
 }
 
 // --- Fetch helper ---
@@ -171,8 +197,8 @@ async function loadImages() {
 
   if (!data || !images.length) {
     imagePickerGrid.innerHTML = '<p class="empty-state">No images found in watch folder</p>';
-    selectionPreview.innerHTML = '<p class="empty-state">No images selected.</p>';
     updateSelectionSummary();
+    updateRunButtonState();
     return;
   }
 
@@ -250,6 +276,10 @@ async function loadPipelines() {
 async function loadSettings() {
   const data = await fetchJSON(API.settings);
   debugMode = Boolean(data?.debug_mode);
+  textModel = data?.text_model || 'anthropic/claude-opus-4.6';
+  imageModel = data?.image_model || 'replicate:google/nano-banana-pro';
+  settingsTextModel.value = textModel;
+  settingsImageModel.value = imageModel;
   settingsDebugMode.checked = debugMode;
   refreshDebugBar();
 }
@@ -271,10 +301,66 @@ async function loadPipeline(pipelineId) {
   promptInterp.value = pipeline.interpretation || '';
   promptImage.value = pipeline.image || '';
   pipelinePath.textContent = pipeline.path || '';
+  promptLastSavedState = JSON.stringify({
+    pipelineId: pipeline.id,
+    interpretation: promptInterp.value,
+    image: promptImage.value,
+  });
+}
+
+function schedulePromptAutosave() {
+  clearTimeout(promptSaveTimeout);
+  promptSaveTimeout = setTimeout(() => {
+    savePromptsToPipeline();
+  }, 700);
+}
+
+async function savePromptsToPipeline() {
+  if (!currentPipelineId) return;
+
+  const saveState = JSON.stringify({
+    pipelineId: currentPipelineId,
+    interpretation: promptInterp.value,
+    image: promptImage.value,
+  });
+  if (saveState === promptLastSavedState) {
+    return;
+  }
+  if (promptSaveInFlight) {
+    promptSavePending = true;
+    return;
+  }
+
+  promptSaveInFlight = true;
+  promptSavePending = false;
+  const payload = JSON.parse(saveState);
+  const result = await fetchJSON(`${API.pipelines}/${encodeURIComponent(currentPipelineId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      interpretation: payload.interpretation,
+      image: payload.image,
+    }),
+  });
+  promptSaveInFlight = false;
+
+  if (!result || !result.ok) {
+    updateStatus('error', 'Error', 'Failed to save pipeline prompts.');
+    return;
+  }
+
+  promptLastSavedState = saveState;
+  pipelinePath.textContent = result.path || pipelinePath.textContent;
+  if (promptSavePending) {
+    promptSavePending = false;
+    savePromptsToPipeline();
+  }
 }
 
 function openSettingsModal() {
   settingsDefaultPipeline.value = defaultPipelineId || currentPipelineId || '';
+  settingsTextModel.value = textModel;
+  settingsImageModel.value = imageModel;
   settingsDebugMode.checked = debugMode;
   settingsModal.hidden = false;
 }
@@ -289,6 +375,13 @@ function openImagePickerModal() {
 
 function closeImagePickerModal() {
   imagePickerModal.hidden = true;
+}
+
+function startImageAutoRefresh() {
+  if (imagesRefreshInterval) clearInterval(imagesRefreshInterval);
+  imagesRefreshInterval = setInterval(() => {
+    loadImages();
+  }, 1000);
 }
 
 async function openPipelineEditorModal() {
@@ -403,11 +496,37 @@ function openOutputModal() {
 
   const imgUrl = `/output/${encodeURIComponent(currentPosterFilename)}`;
   outputModalBody.innerHTML = `<img src="${imgUrl}" alt="Generated poster preview">`;
+  updateOutputModalNavigation();
   outputModal.hidden = false;
 }
 
 function closeOutputModal() {
   outputModal.hidden = true;
+}
+
+function updateOutputModalNavigation() {
+  const currentIndex = libraryItems.findIndex(item => item.poster_filename === currentPosterFilename);
+  const hasItems = currentIndex !== -1 && libraryItems.length > 1;
+  btnOutputPrev.disabled = !hasItems;
+  btnOutputNext.disabled = !hasItems;
+}
+
+function showPreviousOutput() {
+  navigateOutputModal(-1);
+}
+
+function showNextOutput() {
+  navigateOutputModal(1);
+}
+
+function navigateOutputModal(direction) {
+  if (!libraryItems.length || !currentPosterFilename) return;
+
+  const currentIndex = libraryItems.findIndex(item => item.poster_filename === currentPosterFilename);
+  if (currentIndex === -1) return;
+
+  const nextIndex = (currentIndex + direction + libraryItems.length) % libraryItems.length;
+  restoreLibraryItem(libraryItems[nextIndex].poster_filename);
 }
 
 async function saveSettings() {
@@ -420,6 +539,8 @@ async function saveSettings() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       default_pipeline_id: selectedDefault,
+      text_model: settingsTextModel.value,
+      image_model: settingsImageModel.value,
       debug_mode: settingsDebugMode.checked,
     }),
   });
@@ -432,6 +553,8 @@ async function saveSettings() {
 
   defaultPipelineId = result.default_pipeline_id;
   debugMode = Boolean(result.debug_mode);
+  textModel = result.text_model || textModel;
+  imageModel = result.image_model || imageModel;
   await loadPipelines();
   closeSettingsModal();
   updateStatus('idle', 'Idle', 'Settings saved.');
@@ -589,6 +712,8 @@ async function runPipeline() {
       pipeline_id: currentPipelineId,
       interpretation_prompt: promptInterp.value,
       image_generation_prompt: promptImage.value,
+      image_model: imageModel,
+      aspect_ratio: aspectRatioSelect.value,
     }),
   });
   if (!result || !result.ok) {
@@ -631,8 +756,8 @@ function stopPolling() {
     clearInterval(pollInterval);
     pollInterval = null;
   }
-  btnRun.disabled = false;
   btnRun.textContent = 'Run Pipeline';
+  updateRunButtonState();
 }
 
 // --- UI updates ---
@@ -664,6 +789,9 @@ async function restoreLibraryItem(filename) {
   promptInterp.value = item.interpretation_prompt || promptInterp.value || '';
   promptImage.value = item.image_generation_prompt || promptImage.value || '';
   descriptionEditor.value = item.description || '';
+  imageModel = item.image_model || imageModel || 'replicate:google/nano-banana-pro';
+  settingsImageModel.value = imageModel;
+  aspectRatioSelect.value = item.aspect_ratio || aspectRatioSelect.value || '3:4';
 
   showResults(item.description, item.poster_filename);
   openOutputModal();
@@ -681,32 +809,38 @@ function setCameraStatus(message) {
 
 function applyStatusState(data) {
   const { status, message, description, poster_filename, error } = data;
+  pipelineStatus = status || 'idle';
 
   if (description) {
     descriptionEditor.value = description;
+  }
+  if (data.image_model) {
+    imageModel = data.image_model;
+    settingsImageModel.value = imageModel;
+  }
+  if (data.aspect_ratio) {
+    aspectRatioSelect.value = data.aspect_ratio;
   }
 
   if (['interpreting', 'generating', 'downloading'].includes(status)) {
     updateStatus('working', capitalise(status), message);
     descriptionEditor.readOnly = true;
-    btnRun.disabled = true;
   } else if (status === 'complete') {
     updateStatus('complete', 'Complete', message);
     descriptionEditor.readOnly = true;
-    btnRun.disabled = false;
   } else if (status === 'error') {
     updateStatus('error', 'Error', error || message);
     descriptionEditor.readOnly = true;
-    btnRun.disabled = false;
   } else {
     updateStatus('idle', 'Idle', '');
     descriptionEditor.readOnly = true;
-    btnRun.disabled = false;
     if (!poster_filename && !description) {
       currentPosterFilename = null;
     }
   }
 
+  updateRunButtonState();
+  updateBusyOverlay();
   updateStageHighlights(data);
 }
 
@@ -793,27 +927,52 @@ function renderSelection() {
       badge.textContent = isSelected ? 'Selected' : 'Select';
     }
   });
-  renderSelectionPreview();
   updateSelectionSummary();
+  updateRunButtonState();
 }
 
 function updateSelectionSummary() {
   selectionCount.textContent = `${selectedImages.size} selected`;
 }
 
-function renderSelectionPreview() {
-  const selected = images.filter(image => selectedImages.has(image.filename));
-  if (!selected.length) {
-    selectionPreview.innerHTML = '<p class="empty-state">No images selected.</p>';
+function updateRunButtonState() {
+  btnRun.disabled = selectedImages.size === 0 || ['interpreting', 'generating', 'downloading'].includes(pipelineStatus);
+}
+
+function updateBusyOverlay() {
+  const nextMode = ['interpreting', 'generating', 'downloading'].includes(pipelineStatus)
+    ? 'running'
+    : (pipelineStatus === 'error' ? 'error' : 'idle');
+
+  if (nextMode !== busyOverlayMode) {
+    busyOverlayDismissed = false;
+    busyOverlayMode = nextMode;
+  }
+
+  if (nextMode === 'idle') {
+    busyOverlay.hidden = true;
+    busyOverlay.classList.remove('panel-dismissed');
     return;
   }
 
-  selectionPreview.innerHTML = selected.map(img => `
-    <div class="selection-chip">
-      <img src="${img.data_url}" alt="${img.filename}" loading="lazy">
-      <span>${img.filename}</span>
-    </div>
-  `).join('');
+  busyOverlay.hidden = false;
+  busyOverlayTitle.textContent = pipelineStatus === 'error' ? 'Pipeline error' : 'Pipeline running';
+  busyOverlayMessage.textContent = statusMessage.textContent || statusText.textContent || '';
+  busyOverlay.classList.toggle('panel-dismissed', busyOverlayDismissed && nextMode === 'running');
+}
+
+function handleBusyOverlayClick(event) {
+  if (event.target !== busyOverlay) return;
+  if (busyOverlayMode === 'running') {
+    busyOverlayDismissed = true;
+    busyOverlay.classList.add('panel-dismissed');
+    return;
+  }
+  if (busyOverlayMode === 'error') {
+    busyOverlay.hidden = true;
+    busyOverlayMode = 'idle';
+    busyOverlayDismissed = false;
+  }
 }
 
 function escapeHtml(value) {
@@ -866,9 +1025,21 @@ function renderDebugList() {
 }
 
 window.addEventListener('beforeunload', stopCamera);
+window.addEventListener('beforeunload', () => {
+  if (imagesRefreshInterval) {
+    clearInterval(imagesRefreshInterval);
+  }
+});
 window.addEventListener('keydown', event => {
+  if (outputModal.hidden && event.key !== 'Escape') {
+    return;
+  }
   if (event.key === 'Escape') {
     closeOutputModal();
+  } else if (event.key === 'ArrowLeft') {
+    showPreviousOutput();
+  } else if (event.key === 'ArrowRight') {
+    showNextOutput();
   }
 });
 

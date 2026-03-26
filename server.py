@@ -36,6 +36,44 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 PIPELINES_DIR.mkdir(exist_ok=True)
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+TEXT_MODELS = {
+    "anthropic/claude-opus-4.6": "Claude Opus 4.6",
+    "anthropic/claude-sonnet-4.6": "Claude Sonnet 4.6",
+    "anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+}
+IMAGE_MODELS = {
+    "replicate:google/nano-banana-pro": {
+        "label": "Nano Banana Pro (Replicate)",
+        "provider": "replicate",
+        "model": "google/nano-banana-pro",
+    },
+    "replicate:google/imagen-4-ultra": {
+        "label": "Imagen 4 Ultra (Replicate)",
+        "provider": "replicate",
+        "model": "google/imagen-4-ultra",
+    },
+    "replicate:google/nano-banana": {
+        "label": "Nano Banana (Replicate)",
+        "provider": "replicate",
+        "model": "google/nano-banana",
+    },
+    "replicate:google/nano-banana-2": {
+        "label": "Nano Banana 2 (Replicate)",
+        "provider": "replicate",
+        "model": "google/nano-banana-2",
+    },
+    "replicate:black-forest-labs/flux-2-pro": {
+        "label": "FLUX.2 Pro (Replicate)",
+        "provider": "replicate",
+        "model": "black-forest-labs/flux-2-pro",
+    },
+    "openrouter:google/gemini-3.1-flash-image-preview": {
+        "label": "Gemini 3.1 Flash Image Preview (OpenRouter)",
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-flash-image-preview",
+    },
+}
+ASPECT_RATIOS = {"1:1", "3:4", "4:3", "9:16", "16:9"}
 
 # --- Default prompts ---
 
@@ -170,6 +208,35 @@ def save_config(config: dict):
         json.dump(config, f, indent=2)
 
 
+def get_fallback_pipeline_id() -> str:
+    viable_ids = list_viable_pipeline_ids()
+    if not viable_ids:
+        return ensure_default_pipeline()
+    return "product-poster" if "product-poster" in viable_ids else viable_ids[0]
+
+
+def ensure_config() -> dict:
+    existing = load_config()
+    fallback_pipeline_id = get_fallback_pipeline_id()
+    normalized = {
+        "default_pipeline_id": existing.get("default_pipeline_id")
+        if existing.get("default_pipeline_id") in list_viable_pipeline_ids()
+        else fallback_pipeline_id,
+        "debug_mode": bool(existing.get("debug_mode", False)),
+        "text_model": existing.get("text_model")
+        if existing.get("text_model") in TEXT_MODELS
+        else "anthropic/claude-opus-4.6",
+        "image_model": existing.get("image_model")
+        if existing.get("image_model") in IMAGE_MODELS
+        else "replicate:google/nano-banana-pro",
+    }
+
+    if existing != normalized or not CONFIG_FILE.exists():
+        save_config(normalized)
+
+    return normalized
+
+
 runtime_errors: list[dict] = []
 
 
@@ -230,23 +297,26 @@ def format_replicate_error(data: dict) -> str:
 
 
 def get_default_pipeline_id() -> str:
-    viable_ids = list_viable_pipeline_ids()
-    if not viable_ids:
-        return ensure_default_pipeline()
-
-    config = load_config()
-    configured = config.get("default_pipeline_id")
-    if configured in viable_ids:
-        return configured
-
-    fallback = "product-poster" if "product-poster" in viable_ids else viable_ids[0]
-    if configured != fallback:
-        save_config({"default_pipeline_id": fallback})
-    return fallback
+    return ensure_config()["default_pipeline_id"]
 
 
 def get_debug_mode() -> bool:
-    return bool(load_config().get("debug_mode", False))
+    return bool(ensure_config().get("debug_mode", False))
+
+
+def get_text_model() -> str:
+    return str(ensure_config().get("text_model", "anthropic/claude-opus-4.6"))
+
+
+def get_image_model_option(option_id: str) -> dict:
+    option = IMAGE_MODELS.get(option_id)
+    if not option:
+        raise HTTPException(400, "Invalid image model")
+    return option
+
+
+def get_default_image_model() -> str:
+    return str(ensure_config().get("image_model", "replicate:google/nano-banana-pro"))
 
 
 def list_pipeline_summaries() -> list[dict]:
@@ -296,6 +366,7 @@ def create_pipeline(name: str) -> dict:
 # --- App state ---
 
 ensure_default_pipeline()
+ensure_config()
 current_pipeline_id = get_default_pipeline_id()
 current_pipeline = load_pipeline(current_pipeline_id)
 
@@ -308,6 +379,8 @@ pipeline_state = {
     "started_at": None,
     "source_images": [],
     "pipeline_id": current_pipeline_id,
+    "image_model": "replicate:google/nano-banana-pro",
+    "aspect_ratio": "3:4",
 }
 
 
@@ -423,6 +496,8 @@ def build_library_index() -> list[dict]:
             "interpretation_prompt": metadata.get("interpretation_prompt"),
             "image_generation_prompt": metadata.get("image_generation_prompt"),
             "resolved_image_generation_prompt": metadata.get("resolved_image_generation_prompt"),
+            "image_model": metadata.get("image_model"),
+            "aspect_ratio": metadata.get("aspect_ratio"),
         })
 
     return entries
@@ -462,6 +537,8 @@ def read_output_metadata(path: Path) -> dict:
         "description",
         "image_generation_prompt",
         "resolved_image_generation_prompt",
+        "image_model",
+        "aspect_ratio",
         "source_images",
         "created_at",
     ):
@@ -484,7 +561,7 @@ async def call_claude(images: list[Path], prompt: str) -> str:
     content.append({"type": "text", "text": prompt})
 
     payload = {
-        "model": "anthropic/claude-opus-4.6",
+        "model": get_text_model(),
         "max_tokens": 1024,
         "messages": [
             {"role": "user", "content": content}
@@ -507,12 +584,13 @@ async def call_claude(images: list[Path], prompt: str) -> str:
         return data["choices"][0]["message"]["content"]
 
 
-async def call_replicate(prompt: str) -> str:
-    """Send prompt to Nano Banana 2 via Replicate and return the output image URL."""
+async def call_replicate(prompt: str, model: str, aspect_ratio: str) -> str:
+    """Send prompt to Replicate and return the output image URL."""
     payload = {
         "input": {
             "prompt": prompt,
-            "aspect_ratio": "3:4",
+            "aspect_ratio": aspect_ratio,
+            "output_format": "png",
         }
     }
 
@@ -525,7 +603,7 @@ async def call_replicate(prompt: str) -> str:
     async with httpx.AsyncClient(timeout=120) as client:
         # Try sync mode first (waits up to 60s)
         resp = await client.post(
-            "https://api.replicate.com/v1/models/google/nano-banana-2/predictions",
+            f"https://api.replicate.com/v1/models/{model}/predictions",
             headers=headers,
             json=payload,
         )
@@ -567,6 +645,63 @@ async def call_replicate(prompt: str) -> str:
             raise Exception(f"Unexpected Replicate output format: {output}")
 
 
+def extract_openrouter_image_data_url(data: dict) -> str:
+    choices = data.get("choices") or []
+    if not choices:
+        raise Exception("OpenRouter image generation failed: no choices returned")
+
+    message = (choices[0] or {}).get("message") or {}
+    content = message.get("content")
+
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            image_url = item.get("image_url")
+            if isinstance(image_url, dict):
+                url = image_url.get("url")
+                if isinstance(url, str) and url.startswith("data:image/"):
+                    return url
+            if item.get("type") == "output_image" and isinstance(item.get("image_url"), str):
+                url = item.get("image_url")
+                if url.startswith("data:image/"):
+                    return url
+            if item.get("type") == "image" and isinstance(item.get("data"), str):
+                data_url = item.get("data")
+                if data_url.startswith("data:image/"):
+                    return data_url
+
+    raise Exception("OpenRouter image generation failed: no image content found in response")
+
+
+async def call_openrouter_image(prompt: str, model: str, aspect_ratio: str) -> str:
+    payload = {
+        "model": model,
+        "modalities": ["image", "text"],
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "image_config": {
+            "aspect_ratio": aspect_ratio,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=180) as client:
+        resp = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "http://localhost:8000",
+                "X-Title": "Dementia Poster Generator",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return extract_openrouter_image_data_url(data)
+
+
 async def download_image(url: str, filename: str, metadata: Optional[dict[str, str]] = None) -> Path:
     """Download an image from a URL and save it as a PNG with embedded metadata."""
     output_path = OUTPUT_DIR / filename
@@ -586,6 +721,36 @@ async def download_image(url: str, filename: str, metadata: Optional[dict[str, s
     with Image.open(BytesIO(resp.content)) as image:
         image.save(output_path, format="PNG", pnginfo=png_info)
     return output_path
+
+
+def save_data_url_image(data_url: str, filename: str, metadata: Optional[dict[str, str]] = None) -> Path:
+    if not data_url.startswith("data:image/"):
+        raise Exception("OpenRouter image generation failed: invalid image data URL")
+
+    try:
+        _, encoded = data_url.split(",", 1)
+    except ValueError as exc:
+        raise Exception("OpenRouter image generation failed: malformed image data URL") from exc
+
+    image_bytes = base64.b64decode(encoded)
+    output_path = OUTPUT_DIR / filename
+    png_info = PngInfo()
+    for key, value in (metadata or {}).items():
+        if value is None:
+            continue
+        png_info.add_text(key, str(value))
+
+    with Image.open(BytesIO(image_bytes)) as image:
+        image.save(output_path, format="PNG", pnginfo=png_info)
+    return output_path
+
+
+async def save_generated_image(image_result: str, provider: str, filename: str, metadata: Optional[dict[str, str]] = None) -> Path:
+    if provider == "replicate":
+        return await download_image(image_result, filename, metadata)
+    if provider == "openrouter":
+        return save_data_url_image(image_result, filename, metadata)
+    raise Exception(f"Unsupported image provider: {provider}")
 
 
 # --- API Routes ---
@@ -714,6 +879,17 @@ async def get_settings():
         "default_pipeline_id": get_default_pipeline_id(),
         "available_pipeline_ids": list_viable_pipeline_ids(),
         "debug_mode": get_debug_mode(),
+        "text_model": get_text_model(),
+        "available_text_models": [
+            {"id": model_id, "label": label}
+            for model_id, label in TEXT_MODELS.items()
+        ],
+        "image_model": get_default_image_model(),
+        "available_image_models": [
+            {"id": option_id, "label": option["label"]}
+            for option_id, option in IMAGE_MODELS.items()
+            if option["provider"] == "replicate"
+        ],
     }
 
 
@@ -728,6 +904,12 @@ async def update_settings(body: dict):
     save_config({
         "default_pipeline_id": pipeline_id,
         "debug_mode": bool((body or {}).get("debug_mode", False)),
+        "text_model": (body or {}).get("text_model")
+        if (body or {}).get("text_model") in TEXT_MODELS
+        else get_text_model(),
+        "image_model": (body or {}).get("image_model")
+        if (body or {}).get("image_model") in IMAGE_MODELS
+        else get_default_image_model(),
     })
     current_pipeline_id = pipeline_id
     current_pipeline = load_pipeline(current_pipeline_id)
@@ -737,6 +919,8 @@ async def update_settings(body: dict):
         "ok": True,
         "default_pipeline_id": current_pipeline_id,
         "debug_mode": get_debug_mode(),
+        "text_model": get_text_model(),
+        "image_model": get_default_image_model(),
     }
 
 
@@ -809,10 +993,15 @@ async def run_pipeline(body: dict):
     pipeline_id = body.get("pipeline_id") if body else None
     interpretation_prompt = (body.get("interpretation_prompt") or "").strip() if body else ""
     image_generation_prompt = (body.get("image_generation_prompt") or "").strip() if body else ""
+    image_model = (body.get("image_model") or get_default_image_model()).strip() if body else get_default_image_model()
+    aspect_ratio = (body.get("aspect_ratio") or "3:4").strip() if body else "3:4"
     if not isinstance(selected_filenames, list) or not selected_filenames:
         raise HTTPException(400, "No images selected")
     if not pipeline_id:
         raise HTTPException(400, "No pipeline selected")
+    image_model_option = get_image_model_option(image_model)
+    if aspect_ratio not in ASPECT_RATIOS:
+        raise HTTPException(400, "Invalid aspect ratio")
 
     images = resolve_selected_images(selected_filenames)
     pipeline = load_pipeline(pipeline_id)
@@ -831,13 +1020,15 @@ async def run_pipeline(body: dict):
         "started_at": datetime.now().isoformat(),
         "source_images": selected_filenames,
         "pipeline_id": pipeline["id"],
+        "image_model": image_model,
+        "aspect_ratio": aspect_ratio,
     })
 
-    asyncio.create_task(_run_pipeline(images, pipeline))
+    asyncio.create_task(_run_pipeline(images, pipeline, image_model_option, aspect_ratio))
 
     return {"ok": True, "status": "interpreting", "image_count": len(images)}
 
-async def _run_pipeline(images: list[Path], pipeline: dict):
+async def _run_pipeline(images: list[Path], pipeline: dict, image_model_option: dict, aspect_ratio: str):
     """Run interpretation and generation end-to-end."""
     try:
         pipeline_state["status"] = "interpreting"
@@ -846,17 +1037,21 @@ async def _run_pipeline(images: list[Path], pipeline: dict):
         description = await call_claude(images, pipeline["interpretation"])
         pipeline_state["description"] = description
         pipeline_state["status"] = "generating"
-        pipeline_state["message"] = "Description ready. Generating output..."
+        pipeline_state["message"] = f"Description ready. Generating output with {image_model_option['label']}..."
         image_prompt = pipeline["image"].replace("{description}", description)
-        image_url = await call_replicate(image_prompt)
+        if image_model_option["provider"] == "replicate":
+            image_result = await call_replicate(image_prompt, image_model_option["model"], aspect_ratio)
+        else:
+            image_result = await call_openrouter_image(image_prompt, image_model_option["model"], aspect_ratio)
 
         pipeline_state["status"] = "downloading"
         pipeline_state["message"] = "Downloading generated poster..."
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"poster_{timestamp}.png"
-        await download_image(
-            image_url,
+        await save_generated_image(
+            image_result,
+            image_model_option["provider"],
             filename,
             metadata={
                 "pipeline_id": pipeline["id"],
@@ -865,6 +1060,9 @@ async def _run_pipeline(images: list[Path], pipeline: dict):
                 "description": description,
                 "image_generation_prompt": pipeline["image"],
                 "resolved_image_generation_prompt": image_prompt,
+                "image_model": pipeline_state["image_model"],
+                "image_provider": image_model_option["provider"],
+                "aspect_ratio": aspect_ratio,
                 "source_images": json.dumps([path.name for path in images]),
                 "created_at": datetime.now().isoformat(),
             },

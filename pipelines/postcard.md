@@ -2,12 +2,15 @@
 
 ## Interpretation Prompt
 
-You are interpreting these workshop images as inspiration for a memorable postcard concept. Look for mood, place, emotional tone, symbols, and short phrases that could translate into a postcard someone would want to send. Write a short descriptive output in 3 to 5 sentences explaining the postcard scene, the message it should convey, and the visual details that matter most.
+Examine these images carefully. They contain handwritten notes, sketches, and ideas from a co-design workshop with carers, clinicians, and people with lived experience of dementia. Imagine a postcard somebody is sending home talking about this technology. What would they say? 
+
+##  Rules
+No markup. No lists. Just text.
 
 ## Image Generation Prompt
 
-Create an illustrated postcard image based on the following concept:
+Create an image of a postcard that describes this idea, technology or situation:
 
 {description}
 
-The result should look like a designed postcard with a clear focal scene, atmospheric details, and a warm, shareable tone. It can feel printed, slightly tactile, and emotionally expressive. Aspect ratio 3:4. Resolution 2K.
+The result should look like a real hand written postcard, it can be shown in the context it was sent from, if appropriate.

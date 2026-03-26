@@ -10,6 +10,15 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <div id="busy-overlay" class="busy-overlay" hidden>
+    <div id="busy-overlay-panel" class="busy-overlay-panel">
+      <div class="busy-spinner"></div>
+      <div class="busy-copy">
+        <p id="busy-overlay-title" class="busy-overlay-title">Pipeline running</p>
+        <p id="busy-overlay-message" class="busy-overlay-message"></p>
+      </div>
+    </div>
+  </div>
   <main class="pipeline-flow">
     <div class="card card-status status-monitor" id="status-card">
       <div class="card-header">
@@ -36,11 +45,8 @@
       <div class="card card-images">
         <div class="card-header">
           <h2>Watch Folder / Webcam Input</h2>
-          <button id="btn-refresh" class="btn-icon" title="Refresh images">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          </button>
         </div>
-        <p class="card-hint">Drop images into <code>./watch</code> folder, then refresh.</p>
+        <p class="card-hint">Drop images into <code>./watch</code> folder. The app refreshes automatically.</p>
         <div class="camera-panel">
           <div class="camera-preview">
             <video id="camera-video" autoplay playsinline muted hidden></video>
@@ -60,10 +66,14 @@
             <button id="btn-clear-selection" class="btn-text" type="button">Clear</button>
           </div>
         </div>
-        <div id="selection-preview" class="selection-preview">
-          <p class="empty-state">No images selected.</p>
-        </div>
         <div class="stage-actions">
+          <select id="aspect-ratio-select" class="pipeline-select stage-select">
+            <option value="1:1">1:1</option>
+            <option value="3:4" selected>3:4</option>
+            <option value="4:3">4:3</option>
+            <option value="9:16">9:16</option>
+            <option value="16:9">16:9</option>
+          </select>
           <button id="btn-run" class="btn-run">Run Pipeline</button>
         </div>
       </div>
@@ -72,11 +82,11 @@
     <section class="stage-card" id="stage-interpretation">
       <div class="stage-marker">2</div>
       <div class="card card-prompt">
-        <div class="card-header">
-          <h2>Interpretation Prompt</h2>
-          <button id="btn-open-pipeline-editor" class="btn-text" type="button">Pipeline Editor</button>
+        <h2>Interpretation Prompt</h2>
+        <div class="card-controls-inline">
+          <button id="btn-open-pipeline-editor" class="btn-text" type="button">Add/Edit Pipeline</button>
         </div>
-        <p class="card-hint">Choose a Markdown pipeline, then edit the interpretation prompt used on the selected source images.</p>
+        <p class="card-hint">Choose a Markdown pipeline, then edit the interpretation prompt used on the selected source images. Changes are saved back to the pipeline file automatically.</p>
         <select id="pipeline-select" class="pipeline-select"></select>
         <p id="pipeline-path" class="pipeline-path"></p>
         <textarea id="prompt-interpretation" rows="6" spellcheck="false"></textarea>
@@ -96,16 +106,16 @@
       <div class="stage-marker">4</div>
       <div class="card card-prompt">
         <h2>Image Generation Prompt</h2>
-        <p class="card-hint">Used for this run and embedded in the output PNG. Use <code>{description}</code> as placeholder.</p>
+        <p class="card-hint">Changes are saved back to the pipeline file automatically and embedded in the output PNG. Use <code>{description}</code> as placeholder.</p>
         <textarea id="prompt-image" rows="6" spellcheck="false"></textarea>
       </div>
     </section>
 
     <div class="card card-library">
       <div class="card-header">
-        <h2>Poster Library</h2>
+        <h2>Library</h2>
       </div>
-      <p class="card-hint">Click a saved poster to reload it into the results panel.</p>
+      <p class="card-hint">Click a saved poster to load its metadata and open a large preview.</p>
       <div id="library-grid" class="library-grid">
         <p class="empty-state">No generated posters yet.</p>
       </div>
@@ -125,6 +135,20 @@
         <p class="card-hint">Choose which pipeline should load by default.</p>
         <label class="settings-label" for="settings-default-pipeline">Default pipeline</label>
         <select id="settings-default-pipeline" class="pipeline-select"></select>
+        <label class="settings-label" for="settings-text-model">Interpretation model</label>
+        <select id="settings-text-model" class="pipeline-select">
+          <option value="anthropic/claude-opus-4.6">Claude Opus 4.6</option>
+          <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6</option>
+          <option value="anthropic/claude-haiku-4.5">Claude Haiku 4.5</option>
+        </select>
+        <label class="settings-label" for="settings-image-model">Image model</label>
+        <select id="settings-image-model" class="pipeline-select">
+          <option value="replicate:google/nano-banana-pro">Nano Banana Pro (Replicate)</option>
+          <option value="replicate:google/imagen-4-ultra">Imagen 4 Ultra (Replicate)</option>
+          <option value="replicate:google/nano-banana">Nano Banana (Replicate)</option>
+          <option value="replicate:google/nano-banana-2">Nano Banana 2 (Replicate)</option>
+          <option value="replicate:black-forest-labs/flux-2-pro">FLUX.2 Pro (Replicate)</option>
+        </select>
         <label class="settings-toggle">
           <input id="settings-debug-mode" type="checkbox">
           <span>Enable debug mode</span>
@@ -162,9 +186,14 @@
       <div class="card modal-card">
         <div class="card-header">
           <h2 id="image-picker-title">Select Images</h2>
-          <button id="btn-image-picker-close" class="btn-icon" title="Close image picker">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
+          <div class="card-controls">
+            <button id="btn-refresh" class="btn-icon" title="Refresh images">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+            <button id="btn-image-picker-close" class="btn-icon" title="Close image picker">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
         </div>
         <p class="card-hint">Newest images appear first. Select multiple images or delete ones you no longer need.</p>
         <div id="image-picker-grid" class="image-grid image-picker-grid">
@@ -180,9 +209,17 @@
       <div class="card modal-card image-modal-card">
         <div class="card-header">
           <h2 id="output-title">Generated Output</h2>
-          <button id="btn-output-close" class="btn-icon" title="Close output preview">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
+          <div class="card-controls">
+            <button id="btn-output-prev" class="btn-icon" title="Previous poster" type="button">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <button id="btn-output-next" class="btn-icon" title="Next poster" type="button">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button id="btn-output-close" class="btn-icon" title="Close output preview">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
         </div>
         <div id="output-modal-body" class="output-modal-body">
           <p class="empty-state">No generated output available.</p>
