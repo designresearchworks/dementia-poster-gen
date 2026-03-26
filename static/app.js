@@ -996,11 +996,6 @@ function updateBusyOverlay() {
 
 function handleBusyOverlayClick(event) {
   if (event.target !== busyOverlay) return;
-  if (busyOverlayMode === 'running') {
-    busyOverlayDismissed = true;
-    busyOverlay.classList.add('panel-dismissed');
-    return;
-  }
   if (busyOverlayMode === 'error') {
     busyOverlay.hidden = true;
     busyOverlayMode = 'idle';
