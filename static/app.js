@@ -54,13 +54,12 @@ const pipelinePath = document.getElementById('pipeline-path');
 const promptInterp = document.getElementById('prompt-interpretation');
 const promptImage = document.getElementById('prompt-image');
 const promptImageEditor = document.getElementById('prompt-image-editor');
+const runCountInput = document.getElementById('run-count');
+const rerunInterpretationToggle = document.getElementById('rerun-interpretation-toggle');
+const rerunInterpretationCheckbox = document.getElementById('rerun-interpretation');
 const btnRun = document.getElementById('btn-run');
 const btnRefresh = document.getElementById('btn-refresh');
 const btnSettings = document.getElementById('btn-settings');
-const busyOverlay = document.getElementById('busy-overlay');
-const busyOverlayPanel = document.getElementById('busy-overlay-panel');
-const busyOverlayTitle = document.getElementById('busy-overlay-title');
-const busyOverlayMessage = document.getElementById('busy-overlay-message');
 const settingsModal = document.getElementById('settings-modal');
 const settingsBackdrop = document.getElementById('settings-backdrop');
 const btnSettingsClose = document.getElementById('btn-settings-close');
@@ -119,14 +118,12 @@ let promptSaveTimeout = null;
 let promptSaveInFlight = false;
 let promptSavePending = false;
 let promptLastSavedState = null;
-let busyOverlayDismissed = false;
-let busyOverlayMode = 'idle';
-let suppressNextErrorOverlay = false;
 let activeResize = null;
 let inputRowCollapsed = false;
 let layoutSettings = {
   content_row_height: 448,
 };
+let lastLibraryPosterFilename = null;
 let restoreSettings = {
   interpretation_prompt: true,
   description: true,
@@ -156,7 +153,7 @@ async function init() {
   pipelineEditorTextarea.addEventListener('input', schedulePipelineEditorAutosave);
   btnCreatePipeline.addEventListener('click', createPipelineFromEditor);
   btnPipelineEditorSave.addEventListener('click', savePipelineSource);
-  busyOverlay.addEventListener('click', handleBusyOverlayClick);
+  document.addEventListener('click', handleBlockedControlClick, true);
   btnOutputPrev.addEventListener('click', showPreviousOutput);
   btnOutputNext.addEventListener('click', showNextOutput);
   btnOutputReload.addEventListener('click', reloadCurrentPosterMetadata);
@@ -186,6 +183,7 @@ async function init() {
   promptInterp.addEventListener('input', schedulePromptAutosave);
   promptImageEditor.addEventListener('input', handlePromptImageEditorInput);
   promptImageEditor.addEventListener('keydown', handlePromptImageEditorKeydown);
+  runCountInput.addEventListener('input', syncRunOptions);
   initRowResizers();
   descriptionEditor.addEventListener('input', () => {
     renderPromptImageEditor();
@@ -197,9 +195,6 @@ async function init() {
     await loadPipeline(status.pipeline_id);
   }
   if (status) {
-    if (status.status === 'error') {
-      suppressNextErrorOverlay = true;
-    }
     applyStatusState(status);
   }
   if (status && !['idle', 'complete', 'error'].includes(status.status)) {
@@ -208,7 +203,9 @@ async function init() {
 
   startImageAutoRefresh();
   restoreInputRowPreference();
+  syncRunOptions();
   updateRunButtonState();
+  updateRunConfigInteractivity();
 }
 
 // --- Fetch helper ---
@@ -257,6 +254,7 @@ async function loadImages() {
 }
 
 async function uploadSelectedImage() {
+  if (isBatchRunning()) return;
   const file = imageUploadInput.files?.[0];
   if (!file) {
     updateStatus('error', 'Error', 'Choose an image to upload first.');
@@ -458,6 +456,7 @@ function startImageAutoRefresh() {
 }
 
 async function openPipelineEditorModal() {
+  if (isBatchRunning()) return;
   if (!pipelineEditorSelect.options.length) {
     await loadPipelines();
   }
@@ -604,6 +603,7 @@ function navigateOutputModal(direction) {
 }
 
 async function saveSettings() {
+  if (isBatchRunning()) return;
   const selectedDefault = settingsDefaultPipeline.value;
   if (!selectedDefault) return;
 
@@ -641,7 +641,9 @@ async function saveSettings() {
   restoreSettings = { ...restoreSettings, ...(result.restore_settings || {}) };
   applyLayoutSettings();
   syncAspectRatioOptions(imageModel);
-  await loadPipelines();
+  settingsDefaultPipeline.value = defaultPipelineId;
+  pipelineSelect.value = currentPipelineId;
+  pipelineEditorSelect.value = currentPipelineId;
   closeSettingsModal();
   updateStatus('idle', 'Idle', 'Settings saved.');
   refreshDebugBar();
@@ -736,6 +738,7 @@ async function clearErrors() {
 
 // --- Camera ---
 async function toggleCamera() {
+  if (isBatchRunning()) return;
   if (cameraStream) {
     stopCamera();
     return;
@@ -782,6 +785,7 @@ function stopCamera() {
 }
 
 async function captureFrame() {
+  if (isBatchRunning()) return;
   if (!cameraStream || cameraVideo.videoWidth === 0 || cameraVideo.videoHeight === 0) {
     setCameraStatus('Camera is not ready yet.');
     return;
@@ -816,6 +820,7 @@ async function captureFrame() {
 }
 
 async function deleteImage(filename) {
+  if (isBatchRunning()) return;
   const confirmed = window.confirm(`Delete ${filename} from the watch folder?`);
   if (!confirmed) return;
 
@@ -859,6 +864,8 @@ async function runPipeline() {
       image_generation_prompt: promptImage.value,
       image_model: imageModel,
       aspect_ratio: aspectRatioSelect.value,
+      run_count: Math.max(1, Math.min(20, Number.parseInt(runCountInput.value || '1', 10) || 1)),
+      rerun_interpretation: rerunInterpretationCheckbox.checked,
     }),
   });
   if (!result || !result.ok) {
@@ -886,9 +893,14 @@ async function pollStatus() {
 
   applyStatusState(data);
 
+  if (poster_filename && poster_filename !== lastLibraryPosterFilename) {
+    lastLibraryPosterFilename = poster_filename;
+    showResults(description, poster_filename);
+    loadLibrary();
+  }
+
   if (status === 'complete') {
     stopPolling();
-    showResults(description, poster_filename);
     loadLibrary();
   } else if (status === 'error') {
     stopPolling();
@@ -1013,7 +1025,7 @@ function applyStatusState(data) {
   }
 
   updateRunButtonState();
-  updateBusyOverlay();
+  updateRunConfigInteractivity();
   updateStageHighlights(data);
 }
 
@@ -1070,6 +1082,7 @@ function toggleImageSelection(filename) {
 }
 
 function handleImageGridClick(event) {
+  if (isBatchRunning()) return;
   const deleteButton = event.target.closest('.thumb-delete');
   if (deleteButton) {
     event.preventDefault();
@@ -1109,6 +1122,8 @@ function renderSelection() {
   imagePickerGrid.querySelectorAll('.image-thumb').forEach(button => {
     const isSelected = selectedImages.has(button.dataset.filename);
     button.classList.toggle('selected', isSelected);
+    button.dataset.runBlocked = isBatchRunning() ? 'true' : 'false';
+    button.classList.toggle('is-run-blocked', isBatchRunning());
     const badge = button.querySelector('.thumb-check');
     if (badge) {
       badge.textContent = isSelected ? 'Selected' : 'Select';
@@ -1140,7 +1155,73 @@ function syncAspectRatioOptions(modelId, preferredValue = null) {
 }
 
 function updateRunButtonState() {
-  btnRun.disabled = selectedImages.size === 0 || ['interpreting', 'generating', 'downloading'].includes(pipelineStatus);
+  btnRun.disabled = selectedImages.size === 0;
+  btnRun.dataset.runBlocked = isBatchRunning() ? 'true' : 'false';
+  btnRun.classList.toggle('is-run-blocked', isBatchRunning());
+}
+
+function isBatchRunning() {
+  return ['interpreting', 'generating', 'downloading'].includes(pipelineStatus);
+}
+
+function updateRunConfigInteractivity() {
+  const disabled = isBatchRunning();
+  const blockedControls = [
+    imageUploadInput,
+    btnUploadImage,
+    btnCameraStart,
+    btnCameraCapture,
+    btnRun,
+    btnSelectAll,
+    btnClearSelection,
+    btnRefresh,
+    aspectRatioSelect,
+    runCountInput,
+    rerunInterpretationCheckbox,
+    pipelineSelect,
+    btnOpenPipelineEditor,
+    btnSettings,
+    btnSettingsSave,
+    settingsDefaultPipeline,
+    settingsTextModel,
+    settingsImageModel,
+    settingsDebugMode,
+    settingsRestoreInterpretation,
+    settingsRestoreDescription,
+    settingsRestoreImagePrompt,
+    settingsRestoreImageModel,
+    settingsRestoreAspectRatio,
+    btnLibraryExport,
+    btnLibraryImport,
+  ];
+  blockedControls.forEach(control => {
+    if (!control) return;
+    control.dataset.runBlocked = disabled ? 'true' : 'false';
+    control.classList.toggle('is-run-blocked', disabled);
+  });
+  promptInterp.readOnly = disabled;
+  descriptionEditor.readOnly = true;
+  promptImageEditor.contentEditable = disabled ? 'false' : 'true';
+  promptImageEditor.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  renderSelection();
+}
+
+function handleBlockedControlClick(event) {
+  if (!isBatchRunning()) return;
+  const blockedControl = event.target.closest('[data-run-blocked="true"]');
+  if (!blockedControl) return;
+  event.preventDefault();
+  event.stopPropagation();
+  updateStatus('working', capitalise(pipelineStatus), 'This control is locked while the current batch is running. You can still browse the library.');
+}
+
+function syncRunOptions() {
+  const runCount = Math.max(1, Math.min(20, Number.parseInt(runCountInput.value || '1', 10) || 1));
+  runCountInput.value = String(runCount);
+  rerunInterpretationToggle.hidden = runCount <= 1;
+  if (runCount <= 1) {
+    rerunInterpretationCheckbox.checked = false;
+  }
 }
 
 function getPromptImageValue() {
@@ -1319,44 +1400,6 @@ async function persistLayoutSettings() {
 
   layoutSettings = { ...layoutSettings, ...(result.layout || {}) };
   applyLayoutSettings();
-}
-
-function updateBusyOverlay() {
-  const nextMode = ['interpreting', 'generating', 'downloading'].includes(pipelineStatus)
-    ? 'running'
-    : (pipelineStatus === 'error' ? 'error' : 'idle');
-
-  if (nextMode !== busyOverlayMode) {
-    busyOverlayDismissed = false;
-    busyOverlayMode = nextMode;
-  }
-
-  if (nextMode === 'idle') {
-    busyOverlay.hidden = true;
-    busyOverlay.classList.remove('panel-dismissed');
-    return;
-  }
-
-  if (nextMode === 'error' && suppressNextErrorOverlay) {
-    suppressNextErrorOverlay = false;
-    busyOverlay.hidden = true;
-    busyOverlay.classList.remove('panel-dismissed');
-    return;
-  }
-
-  busyOverlay.hidden = false;
-  busyOverlayTitle.textContent = pipelineStatus === 'error' ? 'Pipeline error' : 'Pipeline running';
-  busyOverlayMessage.textContent = statusMessage.textContent || statusText.textContent || '';
-  busyOverlay.classList.toggle('panel-dismissed', busyOverlayDismissed && nextMode === 'running');
-}
-
-function handleBusyOverlayClick(event) {
-  if (event.target !== busyOverlay) return;
-  if (busyOverlayMode === 'error') {
-    busyOverlay.hidden = true;
-    busyOverlayMode = 'idle';
-    busyOverlayDismissed = false;
-  }
 }
 
 function escapeHtml(value) {

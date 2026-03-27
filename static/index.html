@@ -10,15 +10,6 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div id="busy-overlay" class="busy-overlay" hidden>
-    <div id="busy-overlay-panel" class="busy-overlay-panel">
-      <div class="busy-spinner"></div>
-      <div class="busy-copy">
-        <p id="busy-overlay-title" class="busy-overlay-title">Pipeline running</p>
-        <p id="busy-overlay-message" class="busy-overlay-message"></p>
-      </div>
-    </div>
-  </div>
   <main class="pipeline-flow">
     <div class="card card-status status-monitor" id="status-card">
       <div class="card-header">
@@ -101,7 +92,12 @@
             <option value="16:9">16:9</option>
           </select>
           <button id="btn-run" class="btn-run">Run Pipeline</button>
+          <input id="run-count" class="text-input run-count-input" type="number" min="1" max="20" step="1" value="1" aria-label="Number of runs">
         </div>
+        <label id="rerun-interpretation-toggle" class="settings-toggle run-option-toggle" hidden>
+          <input id="rerun-interpretation" type="checkbox">
+          <span>Also re-run interpretation</span>
+        </label>
         <div class="card-controls-inline">
           <button id="btn-open-pipeline-editor" class="btn-text" type="button">Add/Edit Pipeline</button>
         </div>

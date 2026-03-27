@@ -430,12 +430,17 @@ pipeline_state = {
     "message": "",
     "description": None,
     "poster_filename": None,
+    "poster_filenames": [],
     "error": None,
     "started_at": None,
     "source_images": [],
     "pipeline_id": current_pipeline_id,
     "image_model": get_default_image_model(),
     "aspect_ratio": "3:4",
+    "run_count": 1,
+    "completed_runs": 0,
+    "current_run": 0,
+    "rerun_interpretation": False,
 }
 
 
@@ -980,7 +985,6 @@ async def get_settings():
 
 @app.put("/api/settings")
 async def update_settings(body: dict):
-    global current_pipeline_id, current_pipeline
     pipeline_id = (body or {}).get("default_pipeline_id")
     viable_ids = list_viable_pipeline_ids()
     if pipeline_id not in viable_ids:
@@ -1012,14 +1016,11 @@ async def update_settings(body: dict):
             "content_row_height": content_row_height,
         },
     })
-    current_pipeline_id = pipeline_id
-    current_pipeline = load_pipeline(current_pipeline_id)
-    pipeline_state["pipeline_id"] = current_pipeline_id
     pipeline_state["image_model"] = get_default_image_model()
 
     return {
         "ok": True,
-        "default_pipeline_id": current_pipeline_id,
+        "default_pipeline_id": get_default_pipeline_id(),
         "debug_mode": get_debug_mode(),
         "text_model": get_text_model(),
         "image_model": get_default_image_model(),
@@ -1155,6 +1156,8 @@ async def run_pipeline(body: dict):
     image_generation_prompt = (body.get("image_generation_prompt") or "").strip() if body else ""
     image_model = (body.get("image_model") or get_default_image_model()).strip() if body else get_default_image_model()
     aspect_ratio = (body.get("aspect_ratio") or "3:4").strip() if body else "3:4"
+    run_count = int((body.get("run_count") or 1)) if body else 1
+    rerun_interpretation = bool((body.get("rerun_interpretation") or False)) if body else False
     if not isinstance(selected_filenames, list) or not selected_filenames:
         raise HTTPException(400, "No images selected")
     if not pipeline_id:
@@ -1162,6 +1165,8 @@ async def run_pipeline(body: dict):
     image_model_option = get_image_model_option(image_model)
     if aspect_ratio not in ASPECT_RATIOS:
         raise HTTPException(400, "Invalid aspect ratio")
+    if run_count < 1 or run_count > 20:
+        raise HTTPException(400, "Run count must be between 1 and 20")
 
     images = resolve_selected_images(selected_filenames)
     pipeline = load_pipeline(pipeline_id)
@@ -1176,61 +1181,88 @@ async def run_pipeline(body: dict):
         "message": f"Sending {len(images)} image(s) to Claude for interpretation...",
         "description": None,
         "poster_filename": None,
+        "poster_filenames": [],
         "error": None,
         "started_at": datetime.now().isoformat(),
         "source_images": selected_filenames,
         "pipeline_id": pipeline["id"],
         "image_model": image_model,
         "aspect_ratio": aspect_ratio,
+        "run_count": run_count,
+        "completed_runs": 0,
+        "current_run": 0,
+        "rerun_interpretation": rerun_interpretation if run_count > 1 else False,
     })
 
-    asyncio.create_task(_run_pipeline(images, pipeline, image_model_option, aspect_ratio))
+    asyncio.create_task(_run_pipeline(images, pipeline, image_model_option, aspect_ratio, run_count, rerun_interpretation))
 
-    return {"ok": True, "status": "interpreting", "image_count": len(images)}
+    return {"ok": True, "status": "interpreting", "image_count": len(images), "run_count": run_count}
 
-async def _run_pipeline(images: list[Path], pipeline: dict, image_model_option: dict, aspect_ratio: str):
+async def _run_pipeline(
+    images: list[Path],
+    pipeline: dict,
+    image_model_option: dict,
+    aspect_ratio: str,
+    run_count: int,
+    rerun_interpretation: bool,
+):
     """Run interpretation and generation end-to-end."""
     try:
-        pipeline_state["status"] = "interpreting"
-        pipeline_state["message"] = f"Claude is interpreting {len(images)} image(s)..."
+        description = None
 
-        description = await call_claude(images, pipeline["interpretation"])
-        pipeline_state["description"] = description
-        pipeline_state["status"] = "generating"
-        pipeline_state["message"] = f"Description ready. Generating output with {image_model_option['label']}..."
-        image_prompt = pipeline["image"].replace("{description}", description)
-        if image_model_option["provider"] == "replicate":
-            image_result = await call_replicate(image_prompt, image_model_option["model"], aspect_ratio)
-        else:
-            image_result = await call_openrouter_image(image_prompt, image_model_option["model"], aspect_ratio)
+        for run_index in range(run_count):
+            pipeline_state["current_run"] = run_index + 1
+            if run_index == 0 or rerun_interpretation:
+                pipeline_state["status"] = "interpreting"
+                if run_count > 1 and rerun_interpretation:
+                    pipeline_state["message"] = (
+                        f"Interpreting source images for run {run_index + 1} of {run_count}..."
+                    )
+                else:
+                    pipeline_state["message"] = f"Claude is interpreting {len(images)} image(s)..."
+                description = await call_claude(images, pipeline["interpretation"])
+                pipeline_state["description"] = description
 
-        pipeline_state["status"] = "downloading"
-        pipeline_state["message"] = "Downloading generated poster..."
+            image_prompt = pipeline["image"].replace("{description}", description or "")
+            pipeline_state["status"] = "generating"
+            pipeline_state["message"] = (
+                f"Generating image {run_index + 1} of {run_count} with {image_model_option['label']}..."
+            )
+            if image_model_option["provider"] == "replicate":
+                image_result = await call_replicate(image_prompt, image_model_option["model"], aspect_ratio)
+            else:
+                image_result = await call_openrouter_image(image_prompt, image_model_option["model"], aspect_ratio)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"poster_{timestamp}.png"
-        await save_generated_image(
-            image_result,
-            image_model_option["provider"],
-            filename,
-            metadata={
-                "pipeline_id": pipeline["id"],
-                "pipeline_name": pipeline["name"],
-                "interpretation_prompt": pipeline["interpretation"],
-                "description": description,
-                "image_generation_prompt": pipeline["image"],
-                "resolved_image_generation_prompt": image_prompt,
-                "image_model": pipeline_state["image_model"],
-                "image_provider": image_model_option["provider"],
-                "aspect_ratio": aspect_ratio,
-                "source_images": json.dumps([path.name for path in images]),
-                "created_at": datetime.now().isoformat(),
-            },
-        )
+            pipeline_state["status"] = "downloading"
+            pipeline_state["message"] = f"Saving image {run_index + 1} of {run_count}..."
 
-        pipeline_state["poster_filename"] = filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"poster_{timestamp}.png"
+            await save_generated_image(
+                image_result,
+                image_model_option["provider"],
+                filename,
+                metadata={
+                    "pipeline_id": pipeline["id"],
+                    "pipeline_name": pipeline["name"],
+                    "interpretation_prompt": pipeline["interpretation"],
+                    "description": description,
+                    "image_generation_prompt": pipeline["image"],
+                    "resolved_image_generation_prompt": image_prompt,
+                    "image_model": pipeline_state["image_model"],
+                    "image_provider": image_model_option["provider"],
+                    "aspect_ratio": aspect_ratio,
+                    "source_images": json.dumps([path.name for path in images]),
+                    "created_at": datetime.now().isoformat(),
+                },
+            )
+
+            pipeline_state["poster_filename"] = filename
+            pipeline_state["poster_filenames"].append(filename)
+            pipeline_state["completed_runs"] = run_index + 1
+
         pipeline_state["status"] = "complete"
-        pipeline_state["message"] = "Finished"
+        pipeline_state["message"] = f"Finished {run_count} run{'s' if run_count != 1 else ''}"
     except Exception as e:
         log_error(str(e), "pipeline")
         pipeline_state["status"] = "error"
