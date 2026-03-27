@@ -2,15 +2,15 @@
 
 ## Interpretation Prompt
 
-Examine these images carefully. They contain handwritten notes, sketches, and ideas from a co-design workshop with carers, clinicians, and people with lived experience of dementia. Imagine a postcard somebody is sending home talking about this technology. What would they say? 
+These images contain thoughts from people living with dementia and their carers. I want to imagine a world where these ideas all co-exist, and somebody is sending a postcard home. Perhaps they are talking about a technology, or innovation that somehow relates to these ideas. What would be on this postcard, and what's the context be? It could be a person living with dementia writing home, or their family writing to them, or a friend writing. Why did these words end up on a postcard? Think that through, then describe the postcard.
 
 ##  Rules
-No markup. No lists. Just text.
+No markup 
+No lists
+If there are names, you can use them
+Focus on the postcard and the context for it being sent.
 
 ## Image Generation Prompt
 
-Create an image of a postcard that describes this idea, technology or situation:
-
-{description}
-
-The result should look like a real hand written postcard, it can be shown in the context it was sent from, if appropriate.
+A photograph of hand-written postcard:{description}
+Real, hand written, can show the picture side too.

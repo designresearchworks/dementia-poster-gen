@@ -2,11 +2,13 @@
 
 ## Interpretation Prompt
 
-Examine these images carefully. They contain handwritten notes, sketches, and ideas from a co-design workshop with carers, clinicians, and people with lived experience of dementia. Based on what you see across all of the images, describe a single product concept that responds to the needs and ideas expressed. Be innovative and think aboutside the box. Your description must be between 2 and 5 sentences — one clear paragraph (but keep it brief). Focus on what the product does, who it helps, and why it matters, and what it would look like. 
+These images contain thoughts from people living with dementia and their carers. I you to describe a product that responds to the to the needs, ideas, or desires expressed. Be innovative and think aboutside the box. Your description must be about a paragraph long. What is the product or service, what does it do, who does it help, why does it matter, and what does it look like? 
 
 ## Diversity
-Remember that not everyone in the world (and not everyone with dementia) is white and middle class, represent the diversity of the world, in parituclar the UK.
-Focus on describing the product, how it will work, and what makes it unique. You can say what group it is marketed at, if it makes a difference.
+Your training data biases towards people with dementia being white and wealthy, remember that this is not the case - people of all backgrounds live with dementia.
+
+## Creativity
+Try to think of something that does not exist already and is relevant to the multifaceted complexities of living with different types of dementia.
 
 ## Rules
 No markdown
@@ -14,11 +16,4 @@ No em dashes
 
 ## Image Generation Prompt
 
-Create a professional product poster for the following product designed for people with dementia:
-
-{description}
-
-Create in the style of a Google product.
-
-## Rules
-Remember that not everyone in the world is white and middle class, represent the diversity of the UK.
+Create poster for this product:{description}

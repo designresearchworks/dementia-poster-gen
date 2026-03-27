@@ -8,10 +8,12 @@ import asyncio
 import base64
 import json
 import os
+import tempfile
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 import httpx
 from dotenv import load_dotenv
@@ -20,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
+from starlette.background import BackgroundTask
 
 load_dotenv()
 
@@ -223,6 +226,7 @@ def get_fallback_pipeline_id() -> str:
 def ensure_config() -> dict:
     existing = load_config()
     fallback_pipeline_id = get_fallback_pipeline_id()
+    existing_layout = existing.get("layout") or {}
     normalized = {
         "default_pipeline_id": existing.get("default_pipeline_id")
         if existing.get("default_pipeline_id") in list_viable_pipeline_ids()
@@ -234,7 +238,21 @@ def ensure_config() -> dict:
         "image_model": existing.get("image_model")
         if existing.get("image_model") in IMAGE_MODELS
         else "replicate:google/nano-banana-pro",
+        "restore_settings": {
+            "interpretation_prompt": bool((existing.get("restore_settings") or {}).get("interpretation_prompt", True)),
+            "description": bool((existing.get("restore_settings") or {}).get("description", True)),
+            "image_generation_prompt": bool((existing.get("restore_settings") or {}).get("image_generation_prompt", True)),
+            "image_model": bool((existing.get("restore_settings") or {}).get("image_model", True)),
+            "aspect_ratio": bool((existing.get("restore_settings") or {}).get("aspect_ratio", True)),
+        },
+        "layout": {
+            "content_row_height": int(existing_layout.get("content_row_height", 448))
+            if isinstance(existing_layout.get("content_row_height", 448), (int, float))
+            else 448,
+        },
     }
+
+    normalized["layout"]["content_row_height"] = max(220, min(1200, normalized["layout"]["content_row_height"]))
 
     if existing != normalized or not CONFIG_FILE.exists():
         save_config(normalized)
@@ -346,6 +364,14 @@ def get_image_model_option(option_id: str) -> dict:
 
 def get_default_image_model() -> str:
     return str(ensure_config().get("image_model", "replicate:google/nano-banana-pro"))
+
+
+def get_restore_settings() -> dict:
+    return dict(ensure_config().get("restore_settings", {}))
+
+
+def get_layout_settings() -> dict:
+    return dict(ensure_config().get("layout", {}))
 
 
 def list_pipeline_summaries() -> list[dict]:
@@ -548,6 +574,13 @@ def build_library_index() -> list[dict]:
         })
 
     return entries
+
+
+def safe_output_member_path(name: str) -> Path:
+    target = (OUTPUT_DIR / Path(name).name).resolve()
+    if target.parent != OUTPUT_DIR.resolve():
+        raise HTTPException(400, "Invalid archive entry")
+    return target
 
 
 def parse_source_images(value: Optional[str]) -> list[str]:
@@ -940,6 +973,8 @@ async def get_settings():
             for option_id, option in IMAGE_MODELS.items()
             if option["provider"] == "replicate"
         ],
+        "restore_settings": get_restore_settings(),
+        "layout": get_layout_settings(),
     }
 
 
@@ -951,6 +986,12 @@ async def update_settings(body: dict):
     if pipeline_id not in viable_ids:
         raise HTTPException(400, "Invalid default pipeline")
 
+    requested_layout = (body or {}).get("layout") or {}
+    content_row_height = requested_layout.get("content_row_height", get_layout_settings().get("content_row_height", 448))
+    if not isinstance(content_row_height, (int, float)):
+        content_row_height = get_layout_settings().get("content_row_height", 448)
+    content_row_height = max(220, min(1200, int(content_row_height)))
+
     save_config({
         "default_pipeline_id": pipeline_id,
         "debug_mode": bool((body or {}).get("debug_mode", False)),
@@ -960,6 +1001,16 @@ async def update_settings(body: dict):
         "image_model": (body or {}).get("image_model")
         if (body or {}).get("image_model") in IMAGE_MODELS
         else get_default_image_model(),
+        "restore_settings": {
+            "interpretation_prompt": bool(((body or {}).get("restore_settings") or {}).get("interpretation_prompt", True)),
+            "description": bool(((body or {}).get("restore_settings") or {}).get("description", True)),
+            "image_generation_prompt": bool(((body or {}).get("restore_settings") or {}).get("image_generation_prompt", True)),
+            "image_model": bool(((body or {}).get("restore_settings") or {}).get("image_model", True)),
+            "aspect_ratio": bool(((body or {}).get("restore_settings") or {}).get("aspect_ratio", True)),
+        },
+        "layout": {
+            "content_row_height": content_row_height,
+        },
     })
     current_pipeline_id = pipeline_id
     current_pipeline = load_pipeline(current_pipeline_id)
@@ -972,6 +1023,8 @@ async def update_settings(body: dict):
         "debug_mode": get_debug_mode(),
         "text_model": get_text_model(),
         "image_model": get_default_image_model(),
+        "restore_settings": get_restore_settings(),
+        "layout": get_layout_settings(),
     }
 
 
@@ -1038,6 +1091,56 @@ async def get_results():
 @app.get("/api/library")
 async def get_library():
     return {"items": build_library_index()}
+
+
+@app.get("/api/library/export")
+async def export_library():
+    fd, temp_path = tempfile.mkstemp(prefix="library_export_", suffix=".zip")
+    os.close(fd)
+    archive_path = Path(temp_path)
+
+    with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
+        for path in sorted(OUTPUT_DIR.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+                continue
+            archive.write(path, arcname=path.name)
+
+    filename = f"library_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(archive_path.unlink, missing_ok=True),
+    )
+
+
+@app.post("/api/library/import")
+async def import_library(file: UploadFile = File(...)):
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(400, "Upload a zip file")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(400, "Uploaded zip is empty")
+
+    try:
+        with ZipFile(BytesIO(contents)) as archive:
+            members = [member for member in archive.infolist() if not member.is_dir()]
+            imported = 0
+            for member in members:
+                member_name = Path(member.filename).name
+                if not member_name:
+                    continue
+                if Path(member_name).suffix.lower() not in IMAGE_EXTENSIONS:
+                    continue
+                target = safe_output_member_path(member_name)
+                with archive.open(member) as source, open(target, "wb") as destination:
+                    destination.write(source.read())
+                imported += 1
+    except BadZipFile as exc:
+        raise HTTPException(400, "Invalid zip file") from exc
+
+    return {"ok": True, "imported": imported}
 
 
 @app.post("/api/run")
@@ -1127,7 +1230,7 @@ async def _run_pipeline(images: list[Path], pipeline: dict, image_model_option: 
 
         pipeline_state["poster_filename"] = filename
         pipeline_state["status"] = "complete"
-        pipeline_state["message"] = "Poster generated!"
+        pipeline_state["message"] = "Finished"
     except Exception as e:
         log_error(str(e), "pipeline")
         pipeline_state["status"] = "error"

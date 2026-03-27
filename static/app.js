@@ -13,13 +13,11 @@ const API = {
   status: '/api/status',
   results: '/api/results',
   library: '/api/library',
+  libraryExport: '/api/library/export',
+  libraryImport: '/api/library/import',
 };
 
 // --- DOM refs ---
-const btnOpenImagePicker = document.getElementById('btn-open-image-picker');
-const imagePickerModal = document.getElementById('image-picker-modal');
-const imagePickerBackdrop = document.getElementById('image-picker-backdrop');
-const btnImagePickerClose = document.getElementById('btn-image-picker-close');
 const imagePickerGrid = document.getElementById('image-picker-grid');
 const btnOpenPipelineEditor = document.getElementById('btn-open-pipeline-editor');
 const imageUploadInput = document.getElementById('image-upload-input');
@@ -37,6 +35,7 @@ const outputModal = document.getElementById('output-modal');
 const outputBackdrop = document.getElementById('output-backdrop');
 const btnOutputPrev = document.getElementById('btn-output-prev');
 const btnOutputNext = document.getElementById('btn-output-next');
+const btnOutputReload = document.getElementById('btn-output-reload');
 const btnOutputClose = document.getElementById('btn-output-close');
 const outputModalBody = document.getElementById('output-modal-body');
 const cameraVideo = document.getElementById('camera-video');
@@ -44,6 +43,8 @@ const cameraPlaceholder = document.getElementById('camera-placeholder');
 const cameraStatus = document.getElementById('camera-status');
 const btnCameraStart = document.getElementById('btn-camera-start');
 const btnCameraCapture = document.getElementById('btn-camera-capture');
+const btnToggleInputRow = document.getElementById('btn-toggle-input-row');
+const inputBoard = document.getElementById('input-board');
 const selectionCount = document.getElementById('selection-count');
 const btnSelectAll = document.getElementById('btn-select-all');
 const btnClearSelection = document.getElementById('btn-clear-selection');
@@ -52,6 +53,7 @@ const pipelineSelect = document.getElementById('pipeline-select');
 const pipelinePath = document.getElementById('pipeline-path');
 const promptInterp = document.getElementById('prompt-interpretation');
 const promptImage = document.getElementById('prompt-image');
+const promptImageEditor = document.getElementById('prompt-image-editor');
 const btnRun = document.getElementById('btn-run');
 const btnRefresh = document.getElementById('btn-refresh');
 const btnSettings = document.getElementById('btn-settings');
@@ -63,10 +65,18 @@ const settingsModal = document.getElementById('settings-modal');
 const settingsBackdrop = document.getElementById('settings-backdrop');
 const btnSettingsClose = document.getElementById('btn-settings-close');
 const btnSettingsSave = document.getElementById('btn-settings-save');
+const btnLibraryExport = document.getElementById('btn-library-export');
+const btnLibraryImport = document.getElementById('btn-library-import');
+const libraryImportInput = document.getElementById('library-import-input');
 const settingsDefaultPipeline = document.getElementById('settings-default-pipeline');
 const settingsTextModel = document.getElementById('settings-text-model');
 const settingsImageModel = document.getElementById('settings-image-model');
 const settingsDebugMode = document.getElementById('settings-debug-mode');
+const settingsRestoreInterpretation = document.getElementById('settings-restore-interpretation');
+const settingsRestoreDescription = document.getElementById('settings-restore-description');
+const settingsRestoreImagePrompt = document.getElementById('settings-restore-image-prompt');
+const settingsRestoreImageModel = document.getElementById('settings-restore-image-model');
+const settingsRestoreAspectRatio = document.getElementById('settings-restore-aspect-ratio');
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const statusMessage = document.getElementById('status-message');
@@ -83,6 +93,7 @@ const stageInput = document.getElementById('stage-input');
 const stageInterpretation = document.getElementById('stage-interpretation');
 const stageDescription = document.getElementById('stage-description');
 const stageImagePrompt = document.getElementById('stage-image-prompt');
+const resizeHandleBottom = document.getElementById('resize-handle-bottom');
 const descriptionEditor = document.getElementById('description-editor');
 const libraryGrid = document.getElementById('library-grid');
 
@@ -95,6 +106,7 @@ let defaultPipelineId = null;
 let debugMode = false;
 let errorItems = [];
 let currentPosterFilename = null;
+let loadedMetadataPosterFilename = null;
 let textModel = 'anthropic/claude-opus-4.6';
 let imageModel = 'replicate:google/nano-banana-pro';
 let pipelineEditorCurrentId = null;
@@ -109,6 +121,19 @@ let promptSavePending = false;
 let promptLastSavedState = null;
 let busyOverlayDismissed = false;
 let busyOverlayMode = 'idle';
+let suppressNextErrorOverlay = false;
+let activeResize = null;
+let inputRowCollapsed = false;
+let layoutSettings = {
+  content_row_height: 448,
+};
+let restoreSettings = {
+  interpretation_prompt: true,
+  description: true,
+  image_generation_prompt: true,
+  image_model: true,
+  aspect_ratio: true,
+};
 const selectedImages = new Set();
 const MODEL_ASPECT_RATIOS = {
   'replicate:openai/gpt-image-1.5': ['1:1', '3:2', '2:3'],
@@ -123,10 +148,7 @@ async function init() {
   await loadErrors();
 
   btnRefresh.addEventListener('click', loadImages);
-  btnOpenImagePicker.addEventListener('click', openImagePickerModal);
   btnUploadImage.addEventListener('click', uploadSelectedImage);
-  btnImagePickerClose.addEventListener('click', closeImagePickerModal);
-  imagePickerBackdrop.addEventListener('click', closeImagePickerModal);
   btnOpenPipelineEditor.addEventListener('click', openPipelineEditorModal);
   btnPipelineEditorClose.addEventListener('click', closePipelineEditorModal);
   pipelineEditorBackdrop.addEventListener('click', closePipelineEditorModal);
@@ -137,6 +159,7 @@ async function init() {
   busyOverlay.addEventListener('click', handleBusyOverlayClick);
   btnOutputPrev.addEventListener('click', showPreviousOutput);
   btnOutputNext.addEventListener('click', showNextOutput);
+  btnOutputReload.addEventListener('click', reloadCurrentPosterMetadata);
   btnOutputClose.addEventListener('click', closeOutputModal);
   outputBackdrop.addEventListener('click', closeOutputModal);
   btnRun.addEventListener('click', runPipeline);
@@ -145,6 +168,9 @@ async function init() {
   settingsBackdrop.addEventListener('click', closeSettingsModal);
   settingsImageModel.addEventListener('change', () => syncAspectRatioOptions(settingsImageModel.value));
   btnSettingsSave.addEventListener('click', saveSettings);
+  btnLibraryExport.addEventListener('click', exportLibrary);
+  btnLibraryImport.addEventListener('click', () => libraryImportInput.click());
+  libraryImportInput.addEventListener('change', importLibrary);
   btnDebugDetails.addEventListener('click', openDebugModal);
   btnDebugClearInline.addEventListener('click', clearErrors);
   btnDebugClose.addEventListener('click', closeDebugModal);
@@ -152,13 +178,17 @@ async function init() {
   debugBackdrop.addEventListener('click', closeDebugModal);
   btnCameraStart.addEventListener('click', toggleCamera);
   btnCameraCapture.addEventListener('click', captureFrame);
+  btnToggleInputRow.addEventListener('click', toggleInputRow);
   btnSelectAll.addEventListener('click', selectAllImages);
   btnClearSelection.addEventListener('click', clearSelection);
+  imagePickerGrid.addEventListener('click', handleImageGridClick);
   pipelineSelect.addEventListener('change', () => loadPipeline(pipelineSelect.value));
   promptInterp.addEventListener('input', schedulePromptAutosave);
-  promptImage.addEventListener('input', schedulePromptAutosave);
+  promptImageEditor.addEventListener('input', handlePromptImageEditorInput);
+  promptImageEditor.addEventListener('keydown', handlePromptImageEditorKeydown);
+  initRowResizers();
   descriptionEditor.addEventListener('input', () => {
-    if (!descriptionEditor.readOnly) return;
+    renderPromptImageEditor();
   });
 
   // Check if pipeline is already running (e.g. page refresh)
@@ -167,6 +197,9 @@ async function init() {
     await loadPipeline(status.pipeline_id);
   }
   if (status) {
+    if (status.status === 'error') {
+      suppressNextErrorOverlay = true;
+    }
     applyStatusState(status);
   }
   if (status && !['idle', 'complete', 'error'].includes(status.status)) {
@@ -174,6 +207,7 @@ async function init() {
   }
 
   startImageAutoRefresh();
+  restoreInputRowPreference();
   updateRunButtonState();
 }
 
@@ -218,16 +252,6 @@ async function loadImages() {
       <span class="thumb-label">${img.filename}</span>
     </button>
   `).join('');
-
-  imagePickerGrid.querySelectorAll('.image-thumb').forEach(button => {
-    button.addEventListener('click', () => toggleImageSelection(button.dataset.filename));
-  });
-  imagePickerGrid.querySelectorAll('.thumb-delete').forEach(button => {
-    button.addEventListener('click', event => {
-      event.stopPropagation();
-      deleteImage(button.dataset.deleteFilename);
-    });
-  });
 
   renderSelection();
 }
@@ -278,8 +302,10 @@ async function loadLibrary() {
   `).join('');
 
   libraryGrid.querySelectorAll('.library-item').forEach(button => {
-    button.addEventListener('click', () => restoreLibraryItem(button.dataset.filename));
+    button.addEventListener('click', () => previewLibraryItem(button.dataset.filename));
   });
+
+  renderLibrarySelectionState();
 }
 
 async function loadPipelines() {
@@ -315,9 +341,17 @@ async function loadSettings() {
   debugMode = Boolean(data?.debug_mode);
   textModel = data?.text_model || 'anthropic/claude-opus-4.6';
   imageModel = data?.image_model || 'replicate:google/nano-banana-pro';
+  layoutSettings = { ...layoutSettings, ...(data?.layout || {}) };
+  restoreSettings = { ...restoreSettings, ...(data?.restore_settings || {}) };
   settingsTextModel.value = textModel;
   settingsImageModel.value = imageModel;
   settingsDebugMode.checked = debugMode;
+  settingsRestoreInterpretation.checked = Boolean(restoreSettings.interpretation_prompt);
+  settingsRestoreDescription.checked = Boolean(restoreSettings.description);
+  settingsRestoreImagePrompt.checked = Boolean(restoreSettings.image_generation_prompt);
+  settingsRestoreImageModel.checked = Boolean(restoreSettings.image_model);
+  settingsRestoreAspectRatio.checked = Boolean(restoreSettings.aspect_ratio);
+  applyLayoutSettings();
   syncAspectRatioOptions(imageModel);
   refreshDebugBar();
 }
@@ -331,18 +365,21 @@ async function loadErrors() {
 async function loadPipeline(pipelineId) {
   if (!pipelineId) return;
 
+  clearTimeout(promptSaveTimeout);
+  promptSavePending = false;
+
   const pipeline = await fetchJSON(`${API.pipelines}/${encodeURIComponent(pipelineId)}`);
   if (!pipeline) return;
 
   currentPipelineId = pipeline.id;
   pipelineSelect.value = pipeline.id;
   promptInterp.value = pipeline.interpretation || '';
-  promptImage.value = pipeline.image || '';
+  setPromptImageValue(pipeline.image || '');
   pipelinePath.textContent = pipeline.path || '';
   promptLastSavedState = JSON.stringify({
     pipelineId: pipeline.id,
     interpretation: promptInterp.value,
-    image: promptImage.value,
+    image: getPromptImageValue(),
   });
 }
 
@@ -359,7 +396,7 @@ async function savePromptsToPipeline() {
   const saveState = JSON.stringify({
     pipelineId: currentPipelineId,
     interpretation: promptInterp.value,
-    image: promptImage.value,
+    image: getPromptImageValue(),
   });
   if (saveState === promptLastSavedState) {
     return;
@@ -400,20 +437,17 @@ function openSettingsModal() {
   settingsTextModel.value = textModel;
   settingsImageModel.value = imageModel;
   settingsDebugMode.checked = debugMode;
+  settingsRestoreInterpretation.checked = Boolean(restoreSettings.interpretation_prompt);
+  settingsRestoreDescription.checked = Boolean(restoreSettings.description);
+  settingsRestoreImagePrompt.checked = Boolean(restoreSettings.image_generation_prompt);
+  settingsRestoreImageModel.checked = Boolean(restoreSettings.image_model);
+  settingsRestoreAspectRatio.checked = Boolean(restoreSettings.aspect_ratio);
   syncAspectRatioOptions(settingsImageModel.value);
   settingsModal.hidden = false;
 }
 
 function closeSettingsModal() {
   settingsModal.hidden = true;
-}
-
-function openImagePickerModal() {
-  imagePickerModal.hidden = false;
-}
-
-function closeImagePickerModal() {
-  imagePickerModal.hidden = true;
 }
 
 function startImageAutoRefresh() {
@@ -536,6 +570,7 @@ function openOutputModal() {
   const imgUrl = `/output/${encodeURIComponent(currentPosterFilename)}`;
   outputModalBody.innerHTML = `<img src="${imgUrl}" alt="Generated poster preview">`;
   updateOutputModalNavigation();
+  btnOutputReload.disabled = !libraryItems.some(item => item.poster_filename === currentPosterFilename);
   outputModal.hidden = false;
 }
 
@@ -565,7 +600,7 @@ function navigateOutputModal(direction) {
   if (currentIndex === -1) return;
 
   const nextIndex = (currentIndex + direction + libraryItems.length) % libraryItems.length;
-  restoreLibraryItem(libraryItems[nextIndex].poster_filename);
+  previewLibraryItem(libraryItems[nextIndex].poster_filename);
 }
 
 async function saveSettings() {
@@ -581,6 +616,14 @@ async function saveSettings() {
       text_model: settingsTextModel.value,
       image_model: settingsImageModel.value,
       debug_mode: settingsDebugMode.checked,
+      restore_settings: {
+        interpretation_prompt: settingsRestoreInterpretation.checked,
+        description: settingsRestoreDescription.checked,
+        image_generation_prompt: settingsRestoreImagePrompt.checked,
+        image_model: settingsRestoreImageModel.checked,
+        aspect_ratio: settingsRestoreAspectRatio.checked,
+      },
+      layout: layoutSettings,
     }),
   });
   btnSettingsSave.disabled = false;
@@ -594,11 +637,66 @@ async function saveSettings() {
   debugMode = Boolean(result.debug_mode);
   textModel = result.text_model || textModel;
   imageModel = result.image_model || imageModel;
+  layoutSettings = { ...layoutSettings, ...(result.layout || {}) };
+  restoreSettings = { ...restoreSettings, ...(result.restore_settings || {}) };
+  applyLayoutSettings();
   syncAspectRatioOptions(imageModel);
   await loadPipelines();
   closeSettingsModal();
   updateStatus('idle', 'Idle', 'Settings saved.');
   refreshDebugBar();
+}
+
+async function exportLibrary() {
+  btnLibraryExport.disabled = true;
+  try {
+    const response = await fetch(API.libraryExport);
+    if (!response.ok) {
+      throw new Error(`Export failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const filenameMatch = disposition.match(/filename="?([^"]+)"?/i);
+    const filename = filenameMatch?.[1] || 'library_export.zip';
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    updateStatus('idle', 'Idle', 'Library exported.');
+  } catch (error) {
+    updateStatus('error', 'Error', error.message || 'Failed to export library.');
+  } finally {
+    btnLibraryExport.disabled = false;
+  }
+}
+
+async function importLibrary() {
+  const file = libraryImportInput.files?.[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('file', file);
+  btnLibraryImport.disabled = true;
+
+  const result = await fetchJSON(API.libraryImport, {
+    method: 'POST',
+    body: formData,
+  });
+
+  btnLibraryImport.disabled = false;
+  libraryImportInput.value = '';
+
+  if (!result || !result.ok) {
+    updateStatus('error', 'Error', 'Failed to import library.');
+    return;
+  }
+
+  await loadLibrary();
+  updateStatus('idle', 'Idle', `Imported ${result.imported} file${result.imported === 1 ? '' : 's'} into the library.`);
 }
 
 function openDebugModal() {
@@ -741,6 +839,13 @@ async function runPipeline() {
     updateStatus('error', 'Error', 'Select at least one image to run the pipeline.');
     return;
   }
+  const allowedAspectRatios = MODEL_ASPECT_RATIOS[imageModel] || ['1:1', '3:4', '4:3', '9:16', '16:9'];
+  const selectedAspectRatio = aspectRatioSelect.value;
+  if (!selectedAspectRatio || !allowedAspectRatios.includes(selectedAspectRatio)) {
+    updateStatus('error', 'Error', 'Select a valid aspect ratio before running the pipeline.');
+    syncAspectRatioOptions(imageModel);
+    return;
+  }
   btnRun.disabled = true;
   btnRun.textContent = 'Running...';
 
@@ -811,6 +916,7 @@ function updateStatus(state, text, message) {
 function showResults(description, posterFilename) {
   if (description) {
     descriptionEditor.value = description;
+    renderPromptImageEditor();
   }
 
   if (posterFilename) {
@@ -818,26 +924,53 @@ function showResults(description, posterFilename) {
   }
 }
 
-async function restoreLibraryItem(filename) {
+function previewLibraryItem(filename) {
   const item = libraryItems.find(entry => entry.poster_filename === filename);
+  if (!item) return;
+  currentPosterFilename = item.poster_filename;
+  openOutputModal();
+}
+
+async function reloadCurrentPosterMetadata() {
+  if (!currentPosterFilename) return;
+
+  const item = libraryItems.find(entry => entry.poster_filename === currentPosterFilename);
   if (!item) return;
 
   if (item.pipeline_id) {
     await loadPipeline(item.pipeline_id);
   }
 
-  promptInterp.value = item.interpretation_prompt || promptInterp.value || '';
-  promptImage.value = item.image_generation_prompt || promptImage.value || '';
-  descriptionEditor.value = item.description || '';
-  imageModel = item.image_model || imageModel || 'replicate:google/nano-banana-pro';
-  settingsImageModel.value = imageModel;
-  syncAspectRatioOptions(imageModel, item.aspect_ratio || aspectRatioSelect.value || '3:4');
-  aspectRatioSelect.value = item.aspect_ratio || aspectRatioSelect.value || '3:4';
+  if (restoreSettings.interpretation_prompt) {
+    promptInterp.value = item.interpretation_prompt || promptInterp.value || '';
+  }
+  if (restoreSettings.image_generation_prompt) {
+    setPromptImageValue(item.image_generation_prompt || getPromptImageValue() || '');
+  }
+  if (restoreSettings.description) {
+    descriptionEditor.value = item.description || '';
+    renderPromptImageEditor();
+  }
+  if (restoreSettings.image_model) {
+    imageModel = item.image_model || imageModel || 'replicate:google/nano-banana-pro';
+    settingsImageModel.value = imageModel;
+  }
+  if (restoreSettings.aspect_ratio) {
+    syncAspectRatioOptions(imageModel, item.aspect_ratio || aspectRatioSelect.value || '3:4');
+    aspectRatioSelect.value = item.aspect_ratio || aspectRatioSelect.value || '3:4';
+  }
 
   showResults(item.description, item.poster_filename);
-  openOutputModal();
+  loadedMetadataPosterFilename = item.poster_filename;
+  renderLibrarySelectionState();
   updateStatus('complete', 'Library', `Loaded saved poster ${item.poster_filename}`);
   descriptionEditor.readOnly = true;
+}
+
+function renderLibrarySelectionState() {
+  libraryGrid.querySelectorAll('.library-item').forEach(button => {
+    button.classList.toggle('is-loaded', button.dataset.filename === loadedMetadataPosterFilename);
+  });
 }
 
 function capitalise(str) {
@@ -854,21 +987,19 @@ function applyStatusState(data) {
 
   if (description) {
     descriptionEditor.value = description;
+    renderPromptImageEditor();
   }
   if (data.image_model) {
     imageModel = data.image_model;
     settingsImageModel.value = imageModel;
     syncAspectRatioOptions(imageModel, data.aspect_ratio || aspectRatioSelect.value);
   }
-  if (data.aspect_ratio) {
-    aspectRatioSelect.value = data.aspect_ratio;
-  }
 
   if (['interpreting', 'generating', 'downloading'].includes(status)) {
     updateStatus('working', capitalise(status), message);
     descriptionEditor.readOnly = true;
   } else if (status === 'complete') {
-    updateStatus('complete', 'Complete', message);
+    updateStatus('complete', 'Finished', message);
     descriptionEditor.readOnly = true;
   } else if (status === 'error') {
     updateStatus('error', 'Error', error || message);
@@ -938,6 +1069,20 @@ function toggleImageSelection(filename) {
   renderSelection();
 }
 
+function handleImageGridClick(event) {
+  const deleteButton = event.target.closest('.thumb-delete');
+  if (deleteButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    deleteImage(deleteButton.dataset.deleteFilename);
+    return;
+  }
+
+  const thumbButton = event.target.closest('.image-thumb');
+  if (!thumbButton || !imagePickerGrid.contains(thumbButton)) return;
+  toggleImageSelection(thumbButton.dataset.filename);
+}
+
 function selectAllImages() {
   images.forEach(image => selectedImages.add(image.filename));
   renderSelection();
@@ -980,16 +1125,200 @@ function updateSelectionSummary() {
 function syncAspectRatioOptions(modelId, preferredValue = null) {
   const allowed = MODEL_ASPECT_RATIOS[modelId] || ['1:1', '3:4', '4:3', '9:16', '16:9'];
   const fallback = allowed.includes('3:4') ? '3:4' : allowed[0];
-  const selected = allowed.includes(preferredValue) ? preferredValue : (allowed.includes(aspectRatioSelect.value) ? aspectRatioSelect.value : fallback);
+  const currentValue = aspectRatioSelect.value;
+  const selected = allowed.includes(preferredValue)
+    ? preferredValue
+    : (allowed.includes(currentValue) ? currentValue : fallback);
 
   aspectRatioSelect.innerHTML = allowed.map(value => `
     <option value="${value}">${value}</option>
   `).join('');
   aspectRatioSelect.value = selected;
+  if (!aspectRatioSelect.value && allowed.length > 0) {
+    aspectRatioSelect.value = allowed[0];
+  }
 }
 
 function updateRunButtonState() {
   btnRun.disabled = selectedImages.size === 0 || ['interpreting', 'generating', 'downloading'].includes(pipelineStatus);
+}
+
+function getPromptImageValue() {
+  return promptImage.value || '';
+}
+
+function setPromptImageValue(value) {
+  promptImage.value = value || '';
+  renderPromptImageEditor();
+}
+
+function getDescriptionTokenText() {
+  return (descriptionEditor.value || '').trim() || 'Description will appear here';
+}
+
+function renderPromptImageEditor() {
+  const template = getPromptImageValue();
+  const fragments = template.split('{description}');
+  const hasPlaceholder = template.includes('{description}');
+  promptImageEditor.innerHTML = '';
+
+  fragments.forEach((fragment, index) => {
+    const needsSpacer = hasPlaceholder && !fragment && (index === 0 || index === fragments.length - 1);
+    if (fragment || needsSpacer) {
+      const textBlock = document.createElement('div');
+      textBlock.className = 'prompt-editor-spacer';
+      textBlock.dataset.fragment = 'text';
+      textBlock.textContent = fragment || '';
+      if (!fragment) {
+        textBlock.appendChild(document.createElement('br'));
+      }
+      promptImageEditor.appendChild(textBlock);
+    }
+    if (hasPlaceholder && index < fragments.length - 1) {
+      const chip = document.createElement('span');
+      chip.className = 'prompt-token-chip';
+      chip.dataset.token = 'description';
+      chip.contentEditable = 'false';
+      chip.textContent = getDescriptionTokenText();
+      promptImageEditor.appendChild(chip);
+    }
+  });
+
+  updatePromptImageEditorPlaceholderState(template);
+}
+
+function serializePromptImageEditor() {
+  const parts = [];
+  promptImageEditor.childNodes.forEach(node => {
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      parts.push(node.textContent || '');
+      return;
+    }
+    if (node.dataset?.token === 'description') {
+      parts.push('{description}');
+      return;
+    }
+    if (node.dataset?.fragment === 'text') {
+      const rawText = (node.innerText || '').replace(/\u00a0/g, ' ').replace(/\r\n/g, '\n');
+      parts.push(rawText.replace(/\n$/, ''));
+      return;
+    }
+    parts.push(node.textContent || '');
+  });
+  return parts.join('');
+}
+
+function handlePromptImageEditorInput() {
+  promptImage.value = serializePromptImageEditor();
+  updatePromptImageEditorPlaceholderState(promptImage.value);
+  schedulePromptAutosave();
+}
+
+function handlePromptImageEditorKeydown(event) {
+  if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+    return;
+  }
+}
+
+function updatePromptImageEditorPlaceholderState(template) {
+  if (!template) {
+    promptImageEditor.classList.add('is-empty');
+    promptImageEditor.dataset.placeholder = 'Type the image generation prompt here. {description} will render inline.';
+    return;
+  }
+  promptImageEditor.classList.remove('is-empty');
+  promptImageEditor.removeAttribute('data-placeholder');
+}
+
+function toggleInputRow() {
+  setInputRowCollapsed(!inputRowCollapsed);
+}
+
+function setInputRowCollapsed(collapsed) {
+  inputRowCollapsed = Boolean(collapsed);
+  stageInput.classList.toggle('is-collapsed', inputRowCollapsed);
+  inputBoard.hidden = inputRowCollapsed;
+  btnToggleInputRow.textContent = inputRowCollapsed ? 'Expand' : 'Collapse';
+  btnToggleInputRow.setAttribute('aria-expanded', String(!inputRowCollapsed));
+  window.localStorage.setItem('inputRowCollapsed', inputRowCollapsed ? 'true' : 'false');
+}
+
+function restoreInputRowPreference() {
+  const saved = window.localStorage.getItem('inputRowCollapsed');
+  setInputRowCollapsed(saved === 'true');
+}
+
+function initRowResizers() {
+  bindRowResizer(resizeHandleBottom, '--content-row-height', stageInterpretation);
+}
+
+function bindRowResizer(handle, cssVarName, measuredElement) {
+  if (!handle || !measuredElement) return;
+  handle.addEventListener('pointerdown', event => {
+    if (window.innerWidth <= 900) return;
+    event.preventDefault();
+    activeResize = {
+      handle,
+      cssVarName,
+      startY: event.clientY,
+      startHeight: measuredElement.getBoundingClientRect().height,
+    };
+    handle.classList.add('is-dragging');
+    window.addEventListener('pointermove', onRowResizeMove);
+    window.addEventListener('pointerup', onRowResizeEnd);
+  });
+}
+
+function onRowResizeMove(event) {
+  if (!activeResize) return;
+  const nextHeight = Math.max(220, activeResize.startHeight + (event.clientY - activeResize.startY));
+  document.documentElement.style.setProperty(activeResize.cssVarName, `${nextHeight}px`);
+  if (activeResize.cssVarName === '--content-row-height') {
+    layoutSettings.content_row_height = Math.round(nextHeight);
+  }
+}
+
+async function onRowResizeEnd() {
+  if (!activeResize) return;
+  const shouldPersistLayout = activeResize.cssVarName === '--content-row-height';
+  activeResize.handle.classList.remove('is-dragging');
+  activeResize = null;
+  window.removeEventListener('pointermove', onRowResizeMove);
+  window.removeEventListener('pointerup', onRowResizeEnd);
+  if (shouldPersistLayout) {
+    await persistLayoutSettings();
+  }
+}
+
+function applyLayoutSettings() {
+  if (layoutSettings.content_row_height) {
+    document.documentElement.style.setProperty('--content-row-height', `${layoutSettings.content_row_height}px`);
+  }
+}
+
+async function persistLayoutSettings() {
+  if (!defaultPipelineId && !currentPipelineId) return;
+
+  const result = await fetchJSON(API.settings, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      default_pipeline_id: defaultPipelineId || currentPipelineId,
+      text_model: textModel,
+      image_model: imageModel,
+      debug_mode: debugMode,
+      restore_settings: restoreSettings,
+      layout: layoutSettings,
+    }),
+  });
+
+  if (!result || !result.ok) {
+    updateStatus('error', 'Error', 'Failed to save layout.');
+    return;
+  }
+
+  layoutSettings = { ...layoutSettings, ...(result.layout || {}) };
+  applyLayoutSettings();
 }
 
 function updateBusyOverlay() {
@@ -1003,6 +1332,13 @@ function updateBusyOverlay() {
   }
 
   if (nextMode === 'idle') {
+    busyOverlay.hidden = true;
+    busyOverlay.classList.remove('panel-dismissed');
+    return;
+  }
+
+  if (nextMode === 'error' && suppressNextErrorOverlay) {
+    suppressNextErrorOverlay = false;
     busyOverlay.hidden = true;
     busyOverlay.classList.remove('panel-dismissed');
     return;
