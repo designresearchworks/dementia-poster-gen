@@ -15,6 +15,8 @@ const API = {
   library: '/api/library',
   libraryExport: '/api/library/export',
   libraryImport: '/api/library/import',
+  cancel: '/api/cancel',
+  meaningfulDifferenceClear: '/api/meaningful-difference/clear',
 };
 
 // --- DOM refs ---
@@ -52,11 +54,16 @@ const aspectRatioSelect = document.getElementById('aspect-ratio-select');
 const pipelineSelect = document.getElementById('pipeline-select');
 const pipelinePath = document.getElementById('pipeline-path');
 const promptInterp = document.getElementById('prompt-interpretation');
+const promptInterpEditor = document.getElementById('prompt-interpretation-editor');
 const promptImage = document.getElementById('prompt-image');
 const promptImageEditor = document.getElementById('prompt-image-editor');
+const meaningfulDifferenceEditor = document.getElementById('meaningful-difference-editor');
 const runCountInput = document.getElementById('run-count');
-const rerunInterpretationToggle = document.getElementById('rerun-interpretation-toggle');
-const rerunInterpretationCheckbox = document.getElementById('rerun-interpretation');
+const cyclePipelinesToggle = document.getElementById('cycle-pipelines-toggle');
+const cyclePipelinesCheckbox = document.getElementById('cycle-pipelines');
+const encourageVarietyToggle = document.getElementById('encourage-variety-toggle');
+const encourageVarietyCheckbox = document.getElementById('encourage-variety');
+const btnClearMeaningfulDifference = document.getElementById('btn-clear-meaningful-difference');
 const btnRun = document.getElementById('btn-run');
 const btnRefresh = document.getElementById('btn-refresh');
 const btnSettings = document.getElementById('btn-settings');
@@ -71,6 +78,7 @@ const settingsDefaultPipeline = document.getElementById('settings-default-pipeli
 const settingsTextModel = document.getElementById('settings-text-model');
 const settingsImageModel = document.getElementById('settings-image-model');
 const settingsDebugMode = document.getElementById('settings-debug-mode');
+const settingsSkipImageGeneration = document.getElementById('settings-skip-image-generation');
 const settingsRestoreInterpretation = document.getElementById('settings-restore-interpretation');
 const settingsRestoreDescription = document.getElementById('settings-restore-description');
 const settingsRestoreImagePrompt = document.getElementById('settings-restore-image-prompt');
@@ -79,6 +87,7 @@ const settingsRestoreAspectRatio = document.getElementById('settings-restore-asp
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const statusMessage = document.getElementById('status-message');
+const btnCancel = document.getElementById('btn-cancel');
 const debugBar = document.getElementById('debug-bar');
 const debugSummary = document.getElementById('debug-summary');
 const btnDebugDetails = document.getElementById('btn-debug-details');
@@ -90,6 +99,7 @@ const btnDebugClear = document.getElementById('btn-debug-clear');
 const debugList = document.getElementById('debug-list');
 const stageInput = document.getElementById('stage-input');
 const stageInterpretation = document.getElementById('stage-interpretation');
+const stageMeaningfulDifference = document.getElementById('stage-meaningful-difference');
 const stageDescription = document.getElementById('stage-description');
 const stageImagePrompt = document.getElementById('stage-image-prompt');
 const resizeHandleBottom = document.getElementById('resize-handle-bottom');
@@ -103,11 +113,14 @@ let libraryItems = [];
 let currentPipelineId = null;
 let defaultPipelineId = null;
 let debugMode = false;
+let skipImageGeneration = false;
 let errorItems = [];
 let currentPosterFilename = null;
 let loadedMetadataPosterFilename = null;
 let textModel = 'anthropic/claude-opus-4.6';
 let imageModel = 'replicate:google/nano-banana-pro';
+let extractedConcepts = '';
+let meaningfulDifferenceText = '';
 let pipelineEditorCurrentId = null;
 let pipelineEditorSaveTimeout = null;
 let pipelineEditorIsLoading = false;
@@ -118,6 +131,7 @@ let promptSaveTimeout = null;
 let promptSaveInFlight = false;
 let promptSavePending = false;
 let promptLastSavedState = null;
+let interpretationHistory = [];
 let activeResize = null;
 let inputRowCollapsed = false;
 let layoutSettings = {
@@ -161,6 +175,7 @@ async function init() {
   outputBackdrop.addEventListener('click', closeOutputModal);
   btnRun.addEventListener('click', runPipeline);
   btnSettings.addEventListener('click', openSettingsModal);
+  btnCancel.addEventListener('click', cancelPipeline);
   btnSettingsClose.addEventListener('click', closeSettingsModal);
   settingsBackdrop.addEventListener('click', closeSettingsModal);
   settingsImageModel.addEventListener('change', () => syncAspectRatioOptions(settingsImageModel.value));
@@ -180,10 +195,13 @@ async function init() {
   btnClearSelection.addEventListener('click', clearSelection);
   imagePickerGrid.addEventListener('click', handleImageGridClick);
   pipelineSelect.addEventListener('change', () => loadPipeline(pipelineSelect.value));
-  promptInterp.addEventListener('input', schedulePromptAutosave);
+  promptInterpEditor.addEventListener('input', handlePromptInterpEditorInput);
   promptImageEditor.addEventListener('input', handlePromptImageEditorInput);
   promptImageEditor.addEventListener('keydown', handlePromptImageEditorKeydown);
   runCountInput.addEventListener('input', syncRunOptions);
+  cyclePipelinesCheckbox.addEventListener('change', syncRunOptions);
+  encourageVarietyCheckbox.addEventListener('change', syncRunOptions);
+  btnClearMeaningfulDifference.addEventListener('click', clearMeaningfulDifference);
   initRowResizers();
   descriptionEditor.addEventListener('input', () => {
     renderPromptImageEditor();
@@ -337,6 +355,7 @@ async function loadPipelines() {
 async function loadSettings() {
   const data = await fetchJSON(API.settings);
   debugMode = Boolean(data?.debug_mode);
+  skipImageGeneration = Boolean(data?.skip_image_generation);
   textModel = data?.text_model || 'anthropic/claude-opus-4.6';
   imageModel = data?.image_model || 'replicate:google/nano-banana-pro';
   layoutSettings = { ...layoutSettings, ...(data?.layout || {}) };
@@ -344,6 +363,7 @@ async function loadSettings() {
   settingsTextModel.value = textModel;
   settingsImageModel.value = imageModel;
   settingsDebugMode.checked = debugMode;
+  settingsSkipImageGeneration.checked = skipImageGeneration;
   settingsRestoreInterpretation.checked = Boolean(restoreSettings.interpretation_prompt);
   settingsRestoreDescription.checked = Boolean(restoreSettings.description);
   settingsRestoreImagePrompt.checked = Boolean(restoreSettings.image_generation_prompt);
@@ -371,12 +391,12 @@ async function loadPipeline(pipelineId) {
 
   currentPipelineId = pipeline.id;
   pipelineSelect.value = pipeline.id;
-  promptInterp.value = pipeline.interpretation || '';
+  setPromptInterpValue(pipeline.interpretation || '');
   setPromptImageValue(pipeline.image || '');
   pipelinePath.textContent = pipeline.path || '';
   promptLastSavedState = JSON.stringify({
     pipelineId: pipeline.id,
-    interpretation: promptInterp.value,
+    interpretation: getPromptInterpValue(),
     image: getPromptImageValue(),
   });
 }
@@ -393,7 +413,7 @@ async function savePromptsToPipeline() {
 
   const saveState = JSON.stringify({
     pipelineId: currentPipelineId,
-    interpretation: promptInterp.value,
+    interpretation: getPromptInterpValue(),
     image: getPromptImageValue(),
   });
   if (saveState === promptLastSavedState) {
@@ -435,6 +455,7 @@ function openSettingsModal() {
   settingsTextModel.value = textModel;
   settingsImageModel.value = imageModel;
   settingsDebugMode.checked = debugMode;
+  settingsSkipImageGeneration.checked = skipImageGeneration;
   settingsRestoreInterpretation.checked = Boolean(restoreSettings.interpretation_prompt);
   settingsRestoreDescription.checked = Boolean(restoreSettings.description);
   settingsRestoreImagePrompt.checked = Boolean(restoreSettings.image_generation_prompt);
@@ -616,6 +637,7 @@ async function saveSettings() {
       text_model: settingsTextModel.value,
       image_model: settingsImageModel.value,
       debug_mode: settingsDebugMode.checked,
+      skip_image_generation: settingsSkipImageGeneration.checked,
       restore_settings: {
         interpretation_prompt: settingsRestoreInterpretation.checked,
         description: settingsRestoreDescription.checked,
@@ -635,6 +657,7 @@ async function saveSettings() {
 
   defaultPipelineId = result.default_pipeline_id;
   debugMode = Boolean(result.debug_mode);
+  skipImageGeneration = Boolean(result.skip_image_generation);
   textModel = result.text_model || textModel;
   imageModel = result.image_model || imageModel;
   layoutSettings = { ...layoutSettings, ...(result.layout || {}) };
@@ -860,12 +883,14 @@ async function runPipeline() {
     body: JSON.stringify({
       filenames: Array.from(selectedImages),
       pipeline_id: currentPipelineId,
-      interpretation_prompt: promptInterp.value,
+      interpretation_prompt: getPromptInterpValue(),
       image_generation_prompt: promptImage.value,
       image_model: imageModel,
       aspect_ratio: aspectRatioSelect.value,
       run_count: Math.max(1, Math.min(20, Number.parseInt(runCountInput.value || '1', 10) || 1)),
-      rerun_interpretation: rerunInterpretationCheckbox.checked,
+      rerun_interpretation: true,
+      cycle_pipelines: cyclePipelinesCheckbox.checked,
+      encourage_variety: encourageVarietyCheckbox.checked,
     }),
   });
   if (!result || !result.ok) {
@@ -890,6 +915,9 @@ async function pollStatus() {
   if (!data) return;
 
   const { status, message, description, poster_filename, error } = data;
+  if (data.pipeline_id && data.pipeline_id !== currentPipelineId) {
+    await loadPipeline(data.pipeline_id);
+  }
 
   applyStatusState(data);
 
@@ -902,6 +930,8 @@ async function pollStatus() {
   if (status === 'complete') {
     stopPolling();
     loadLibrary();
+  } else if (status === 'cancelled') {
+    stopPolling();
   } else if (status === 'error') {
     stopPolling();
     loadErrors();
@@ -954,8 +984,10 @@ async function reloadCurrentPosterMetadata() {
   }
 
   if (restoreSettings.interpretation_prompt) {
-    promptInterp.value = item.interpretation_prompt || promptInterp.value || '';
+    setPromptInterpValue(item.interpretation_prompt || getPromptInterpValue() || '');
   }
+  extractedConcepts = item.extracted_concepts || extractedConcepts || '';
+  renderPromptInterpEditor();
   if (restoreSettings.image_generation_prompt) {
     setPromptImageValue(item.image_generation_prompt || getPromptImageValue() || '');
   }
@@ -996,6 +1028,21 @@ function setCameraStatus(message) {
 function applyStatusState(data) {
   const { status, message, description, poster_filename, error } = data;
   pipelineStatus = status || 'idle';
+  interpretationHistory = Array.isArray(data.interpretation_history) ? data.interpretation_history : [];
+  extractedConcepts = typeof data.extracted_concepts === 'string' ? data.extracted_concepts : extractedConcepts;
+  meaningfulDifferenceText = typeof data.meaningful_difference_text === 'string'
+    ? data.meaningful_difference_text
+    : '';
+  meaningfulDifferenceEditor.value = meaningfulDifferenceText || '';
+  if (typeof data.cycle_pipelines === 'boolean') {
+    cyclePipelinesCheckbox.checked = data.cycle_pipelines;
+  }
+  if (typeof data.encourage_variety === 'boolean') {
+    encourageVarietyCheckbox.checked = data.encourage_variety;
+  }
+  if (data.pipeline_id) {
+    pipelineSelect.value = data.pipeline_id;
+  }
 
   if (description) {
     descriptionEditor.value = description;
@@ -1007,8 +1054,11 @@ function applyStatusState(data) {
     syncAspectRatioOptions(imageModel, data.aspect_ratio || aspectRatioSelect.value);
   }
 
-  if (['interpreting', 'generating', 'downloading'].includes(status)) {
+  if (['interpreting', 'generating', 'downloading', 'cancelling'].includes(status)) {
     updateStatus('working', capitalise(status), message);
+    descriptionEditor.readOnly = true;
+  } else if (status === 'cancelled') {
+    updateStatus('idle', 'Cancelled', message || 'Cancelled');
     descriptionEditor.readOnly = true;
   } else if (status === 'complete') {
     updateStatus('complete', 'Finished', message);
@@ -1024,14 +1074,21 @@ function applyStatusState(data) {
     }
   }
 
+  syncRunOptions();
+  renderPromptInterpEditor();
   updateRunButtonState();
   updateRunConfigInteractivity();
+  updateCancelButton();
   updateStageHighlights(data);
+}
+
+function isBatchStatus(status) {
+  return ['interpreting', 'generating', 'downloading', 'cancelling'].includes(status);
 }
 
 function updateStageHighlights(data) {
   const { status, description } = data;
-  const stages = [stageInput, stageInterpretation, stageDescription, stageImagePrompt];
+  const stages = [stageInput, stageInterpretation, stageMeaningfulDifference, stageDescription, stageImagePrompt];
   stages.forEach(stage => {
     stage.classList.remove('is-active', 'is-complete');
   });
@@ -1045,10 +1102,16 @@ function updateStageHighlights(data) {
 
   if (status === 'interpreting') {
     stageInterpretation.classList.add('is-active');
+    if (meaningfulDifferenceText) {
+      stageMeaningfulDifference.classList.add('is-complete');
+    }
     return;
   }
 
   stageInterpretation.classList.add('is-complete');
+  if (meaningfulDifferenceText) {
+    stageMeaningfulDifference.classList.add('is-complete');
+  }
 
   if (['generating', 'downloading', 'complete'].includes(status)) {
     if (description) {
@@ -1155,13 +1218,37 @@ function syncAspectRatioOptions(modelId, preferredValue = null) {
 }
 
 function updateRunButtonState() {
-  btnRun.disabled = selectedImages.size === 0;
-  btnRun.dataset.runBlocked = isBatchRunning() ? 'true' : 'false';
-  btnRun.classList.toggle('is-run-blocked', isBatchRunning());
+  const running = isBatchRunning();
+  btnRun.disabled = selectedImages.size === 0 || running;
+  btnRun.dataset.runBlocked = running ? 'true' : 'false';
+  btnRun.classList.toggle('is-run-blocked', running);
+  btnRun.textContent = running ? 'Running...' : 'Run Pipeline';
+}
+
+function updateCancelButton() {
+  btnCancel.hidden = !isBatchRunning();
 }
 
 function isBatchRunning() {
-  return ['interpreting', 'generating', 'downloading'].includes(pipelineStatus);
+  return ['interpreting', 'generating', 'downloading', 'cancelling'].includes(pipelineStatus);
+}
+
+async function cancelPipeline() {
+  if (!isBatchRunning()) return;
+  btnCancel.disabled = true;
+  const result = await fetchJSON(API.cancel, {
+    method: 'POST',
+  });
+  btnCancel.disabled = false;
+  if (!result || !result.ok) {
+    updateStatus('error', 'Error', 'Failed to cancel the current batch.');
+    return;
+  }
+  pipelineStatus = 'cancelling';
+  updateStatus('working', 'Cancelling', 'Cancelling current batch...');
+  updateRunButtonState();
+  updateRunConfigInteractivity();
+  updateCancelButton();
 }
 
 function updateRunConfigInteractivity() {
@@ -1177,7 +1264,8 @@ function updateRunConfigInteractivity() {
     btnRefresh,
     aspectRatioSelect,
     runCountInput,
-    rerunInterpretationCheckbox,
+    cyclePipelinesCheckbox,
+    encourageVarietyCheckbox,
     pipelineSelect,
     btnOpenPipelineEditor,
     btnSettings,
@@ -1201,9 +1289,102 @@ function updateRunConfigInteractivity() {
   });
   promptInterp.readOnly = disabled;
   descriptionEditor.readOnly = true;
+  promptInterpEditor.contentEditable = disabled ? 'false' : 'true';
+  promptInterpEditor.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   promptImageEditor.contentEditable = disabled ? 'false' : 'true';
   promptImageEditor.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   renderSelection();
+}
+
+function getPromptInterpValue() {
+  return promptInterp.value || '';
+}
+
+function getExtractedConceptsTokenText() {
+  return (extractedConcepts || '').trim() || 'Extracted concepts will appear here';
+}
+
+function setPromptInterpValue(value) {
+  promptInterp.value = value || '';
+  renderPromptInterpEditor();
+}
+
+function renderPromptInterpEditor() {
+  const template = getPromptInterpValue();
+  promptInterpEditor.innerHTML = '';
+  const tokens = [
+    {
+      token: '{extracted-concepts}',
+      getText: getExtractedConceptsTokenText,
+    },
+    {
+      token: '{meaningfuldifference}',
+      getText: () => (meaningfulDifferenceText || '').trim() || 'Meaningful difference will appear here',
+    },
+  ];
+
+  const renderTextWithTokens = (text, tokenIndex = 0) => {
+    if (tokenIndex >= tokens.length) {
+      const textBlock = document.createElement('div');
+      textBlock.className = 'prompt-editor-spacer';
+      textBlock.dataset.fragment = 'text';
+      textBlock.textContent = text || '';
+      if (!text) {
+        textBlock.appendChild(document.createElement('br'));
+      }
+      promptInterpEditor.appendChild(textBlock);
+      return;
+    }
+
+    const { token, getText } = tokens[tokenIndex];
+    const fragments = text.split(token);
+    const hasPlaceholder = text.includes(token);
+
+    fragments.forEach((fragment, index) => {
+      if (fragment || (hasPlaceholder && (index === 0 || index === fragments.length - 1))) {
+        renderTextWithTokens(fragment, tokenIndex + 1);
+      }
+      if (hasPlaceholder && index < fragments.length - 1) {
+        const chip = document.createElement('span');
+        chip.className = 'prompt-token-chip';
+        chip.dataset.token = token;
+        chip.contentEditable = 'false';
+        chip.textContent = getText();
+        promptInterpEditor.appendChild(chip);
+      }
+    });
+  };
+
+  renderTextWithTokens(template);
+
+  updatePromptInterpEditorPlaceholderState(template);
+}
+
+function handlePromptInterpEditorInput() {
+  promptInterp.value = serializePromptInterpEditor();
+  updatePromptInterpEditorPlaceholderState(promptInterp.value);
+  schedulePromptAutosave();
+}
+
+function serializePromptInterpEditor() {
+  const clone = promptInterpEditor.cloneNode(true);
+  clone.querySelectorAll('[data-token="extracted-concepts"]').forEach(node => {
+    node.replaceWith(document.createTextNode('{extracted-concepts}'));
+  });
+  clone.querySelectorAll('[data-token="{meaningfuldifference}"]').forEach(node => {
+    node.replaceWith(document.createTextNode('{meaningfuldifference}'));
+  });
+  return editorInnerText(clone);
+}
+
+function updatePromptInterpEditorPlaceholderState(template) {
+  if (!template) {
+    promptInterpEditor.classList.add('is-empty');
+    promptInterpEditor.dataset.placeholder = 'Type the pipeline prompt here.';
+    return;
+  }
+  promptInterpEditor.classList.remove('is-empty');
+  promptInterpEditor.removeAttribute('data-placeholder');
 }
 
 function handleBlockedControlClick(event) {
@@ -1215,13 +1396,36 @@ function handleBlockedControlClick(event) {
   updateStatus('working', capitalise(pipelineStatus), 'This control is locked while the current batch is running. You can still browse the library.');
 }
 
+async function clearMeaningfulDifference() {
+  if (isBatchRunning()) return;
+  btnClearMeaningfulDifference.disabled = true;
+  const result = await fetchJSON(API.meaningfulDifferenceClear, {
+    method: 'POST',
+  });
+  if (!result || !result.ok) {
+    syncRunOptions();
+    updateStatus('error', 'Error', 'Failed to clear meaningful difference.');
+    return;
+  }
+  meaningfulDifferenceText = '';
+  interpretationHistory = [];
+  meaningfulDifferenceEditor.value = '';
+  renderPromptInterpEditor();
+  syncRunOptions();
+  updateStatus('idle', 'Idle', 'Meaningful difference cleared.');
+}
+
 function syncRunOptions() {
   const runCount = Math.max(1, Math.min(20, Number.parseInt(runCountInput.value || '1', 10) || 1));
   runCountInput.value = String(runCount);
-  rerunInterpretationToggle.hidden = runCount <= 1;
+  cyclePipelinesToggle.hidden = runCount <= 1;
+  encourageVarietyToggle.hidden = false;
+  encourageVarietyCheckbox.disabled = isBatchRunning();
+  btnClearMeaningfulDifference.disabled = isBatchRunning() || (!meaningfulDifferenceText && interpretationHistory.length === 0);
   if (runCount <= 1) {
-    rerunInterpretationCheckbox.checked = false;
+    cyclePipelinesCheckbox.checked = false;
   }
+  renderPromptInterpEditor();
 }
 
 function getPromptImageValue() {
@@ -1269,24 +1473,11 @@ function renderPromptImageEditor() {
 }
 
 function serializePromptImageEditor() {
-  const parts = [];
-  promptImageEditor.childNodes.forEach(node => {
-    if (node.nodeType !== Node.ELEMENT_NODE) {
-      parts.push(node.textContent || '');
-      return;
-    }
-    if (node.dataset?.token === 'description') {
-      parts.push('{description}');
-      return;
-    }
-    if (node.dataset?.fragment === 'text') {
-      const rawText = (node.innerText || '').replace(/\u00a0/g, ' ').replace(/\r\n/g, '\n');
-      parts.push(rawText.replace(/\n$/, ''));
-      return;
-    }
-    parts.push(node.textContent || '');
+  const clone = promptImageEditor.cloneNode(true);
+  clone.querySelectorAll('[data-token="description"]').forEach(node => {
+    node.replaceWith(document.createTextNode('{description}'));
   });
-  return parts.join('');
+  return editorInnerText(clone);
 }
 
 function handlePromptImageEditorInput() {
@@ -1309,6 +1500,12 @@ function updatePromptImageEditorPlaceholderState(template) {
   }
   promptImageEditor.classList.remove('is-empty');
   promptImageEditor.removeAttribute('data-placeholder');
+}
+
+function editorInnerText(element) {
+  return (element.innerText || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r\n/g, '\n');
 }
 
 function toggleInputRow() {

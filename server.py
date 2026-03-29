@@ -13,6 +13,7 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 import httpx
@@ -32,17 +33,52 @@ REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 WATCH_DIR = Path(__file__).parent / "watch"
 OUTPUT_DIR = Path(__file__).parent / "output"
 PIPELINES_DIR = Path(__file__).parent / "pipelines"
+PROMPT_LOGS_DIR = Path(__file__).parent / "Prompt Logs"
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
 WATCH_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 PIPELINES_DIR.mkdir(exist_ok=True)
+PROMPT_LOGS_DIR.mkdir(exist_ok=True)
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+EXTRACTED_CONCEPTS_TOKEN = "{extracted-concepts}"
+MEANINGFUL_DIFFERENCE_TOKEN = "{meaningfuldifference}"
+EXTRACTED_CONCEPTS_PROMPT = (
+    "Look at these source images and extract the key concepts, themes, activities, emotions, and needs they contain. "
+    "Return only a concise comma-separated list of extracted concepts. No markdown, no bullets, no explanation."
+)
+MEANINGFUL_DIFFERENCE_COMPRESSION_PROMPT = (
+    "You will be given earlier interpretations from a design ideation run. Create a list of product names, "
+    "technologies, features, and contexts that have been included in these earlier interpretations. Capture the "
+    "shape of the idea. Do not create any markdown or headers. Just output a simple list of features and technologies. "
+    "The list need not be exhaustive, but should include from 10-30 items that capture the spirit of the previous "
+    "interpretations best.\n\n"
+    "<previousinterpretations>\n{previous_interpretations}\n</previousinterpretations>"
+)
 TEXT_MODELS = {
-    "anthropic/claude-opus-4.6": "Claude Opus 4.6",
-    "anthropic/claude-sonnet-4.6": "Claude Sonnet 4.6",
-    "anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+    "anthropic/claude-opus-4.6": {
+        "label": "Claude Opus 4.6",
+        "model": "anthropic/claude-opus-4.6",
+    },
+    "anthropic/claude-opus-4.6:reasoning": {
+        "label": "Claude Opus 4.6 (Reasoning)",
+        "model": "anthropic/claude-opus-4.6",
+        "reasoning": {"enabled": True},
+    },
+    "anthropic/claude-sonnet-4.6": {
+        "label": "Claude Sonnet 4.6",
+        "model": "anthropic/claude-sonnet-4.6",
+    },
+    "anthropic/claude-sonnet-4.6:reasoning": {
+        "label": "Claude Sonnet 4.6 (Reasoning)",
+        "model": "anthropic/claude-sonnet-4.6",
+        "reasoning": {"enabled": True},
+    },
+    "anthropic/claude-haiku-4.5": {
+        "label": "Claude Haiku 4.5",
+        "model": "anthropic/claude-haiku-4.5",
+    },
 }
 IMAGE_MODELS = {
     "replicate:google/nano-banana-pro": {
@@ -232,6 +268,7 @@ def ensure_config() -> dict:
         if existing.get("default_pipeline_id") in list_viable_pipeline_ids()
         else fallback_pipeline_id,
         "debug_mode": bool(existing.get("debug_mode", False)),
+        "skip_image_generation": bool(existing.get("skip_image_generation", False)),
         "text_model": existing.get("text_model")
         if existing.get("text_model") in TEXT_MODELS
         else "anthropic/claude-opus-4.6",
@@ -270,6 +307,53 @@ def log_error(message: str, source: str = "server"):
         "message": message,
     })
     del runtime_errors[:-100]
+
+
+def write_prompt_log(kind: str, prompt: str, metadata: Optional[dict] = None):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"{timestamp}_{kind}.json"
+    path = PROMPT_LOGS_DIR / filename
+    payload = {
+        "timestamp": datetime.now().isoformat(),
+        "kind": kind,
+        "prompt": prompt,
+        "metadata": metadata or {},
+    }
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def truncate_for_log(value, limit: int = 1200) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def extract_openrouter_text_content(data: dict) -> str:
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+
+    message = (choices[0] or {}).get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, str):
+                text_parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            if isinstance(item.get("text"), str):
+                text_parts.append(item["text"])
+                continue
+            if item.get("type") == "text" and isinstance(item.get("content"), str):
+                text_parts.append(item["content"])
+        return "\n".join(part for part in text_parts if part)
+    return ""
 
 
 def format_replicate_error(data: dict) -> str:
@@ -351,8 +435,19 @@ def get_debug_mode() -> bool:
     return bool(ensure_config().get("debug_mode", False))
 
 
+def get_skip_image_generation() -> bool:
+    return bool(ensure_config().get("skip_image_generation", False))
+
+
 def get_text_model() -> str:
     return str(ensure_config().get("text_model", "anthropic/claude-opus-4.6"))
+
+
+def get_text_model_option() -> dict:
+    option = TEXT_MODELS.get(get_text_model())
+    if not option:
+        return TEXT_MODELS["anthropic/claude-opus-4.6"]
+    return option
 
 
 def get_image_model_option(option_id: str) -> dict:
@@ -424,9 +519,10 @@ ensure_default_pipeline()
 ensure_config()
 current_pipeline_id = get_default_pipeline_id()
 current_pipeline = load_pipeline(current_pipeline_id)
+pipeline_task: Optional[asyncio.Task] = None
 
 pipeline_state = {
-    "status": "idle",  # idle | interpreting | generating | downloading | complete | error
+    "status": "idle",  # idle | interpreting | generating | downloading | cancelling | complete | cancelled | error
     "message": "",
     "description": None,
     "poster_filename": None,
@@ -441,6 +537,12 @@ pipeline_state = {
     "completed_runs": 0,
     "current_run": 0,
     "rerun_interpretation": False,
+    "cycle_pipelines": False,
+    "encourage_variety": False,
+    "interpretation_history": [],
+    "meaningful_difference_text": "",
+    "extracted_concepts": "",
+    "cancel_requested": False,
 }
 
 
@@ -567,6 +669,7 @@ def build_library_index() -> list[dict]:
         entries.append({
             "poster_filename": path.name,
             "description": metadata.get("description"),
+            "extracted_concepts": metadata.get("extracted_concepts"),
             "created_at": created_at,
             "source_images": source_images,
             "pipeline_id": metadata.get("pipeline_id"),
@@ -620,6 +723,7 @@ def read_output_metadata(path: Path) -> dict:
         "pipeline_name",
         "interpretation_prompt",
         "description",
+        "extracted_concepts",
         "image_generation_prompt",
         "resolved_image_generation_prompt",
         "image_model",
@@ -631,8 +735,18 @@ def read_output_metadata(path: Path) -> dict:
         if isinstance(value, str) and value:
             metadata[key] = value
     return metadata
-async def call_claude(images: list[Path], prompt: str) -> str:
+async def call_claude(
+    images: list[Path],
+    prompt: str,
+    pipeline_name: str = "",
+    run_number: Optional[int] = None,
+    encourage_variety: bool = False,
+    previous_interpretations: Optional[list[str]] = None,
+    meaningful_difference_text: str = "",
+    prompt_kind: str = "interpretation",
+) -> str:
     """Send images + prompt to Claude via OpenRouter and return the text response."""
+    text_model_option = get_text_model_option()
     content = []
     for img_path in images:
         b64 = image_to_base64(img_path)
@@ -643,15 +757,32 @@ async def call_claude(images: list[Path], prompt: str) -> str:
                 "url": f"data:{media_type};base64,{b64}"
             },
         })
-    content.append({"type": "text", "text": prompt})
+    prompt_text = prompt
+    write_prompt_log(
+        prompt_kind,
+        prompt_text,
+        metadata={
+            "pipeline_name": pipeline_name,
+            "run_number": run_number,
+            "model": text_model_option["model"],
+            "image_count": len(images),
+            "images": [path.name for path in images],
+            "encourage_variety": encourage_variety,
+            "previous_interpretation_count": len(previous_interpretations or []),
+            "meaningful_difference_text_length": len(meaningful_difference_text.strip()),
+        },
+    )
+    content.append({"type": "text", "text": prompt_text})
 
     payload = {
-        "model": get_text_model(),
-        "max_tokens": 1024,
+        "model": text_model_option["model"],
+        "max_tokens": 16384,
         "messages": [
             {"role": "user", "content": content}
         ],
     }
+    if text_model_option.get("reasoning"):
+        payload["reasoning"] = text_model_option["reasoning"]
 
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
@@ -666,11 +797,105 @@ async def call_claude(images: list[Path], prompt: str) -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        raw_content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+        extracted_text = extract_openrouter_text_content(data)
+        log_error(
+            "\n".join([
+                "Interpretation response received",
+                f"Pipeline: {pipeline_name or '(unknown)'}",
+                f"Run: {run_number if run_number is not None else '(unknown)'}",
+                f"Model: {text_model_option['model']}",
+                f"Image count: {len(images)}",
+                f"Images: {', '.join(path.name for path in images) if images else '(none)'}",
+                f"Prompt preview: {truncate_for_log(prompt_text, 400)}",
+                f"Raw content type: {type(raw_content).__name__}",
+                f"Extracted text length: {len(extracted_text.strip())}",
+                f"Extracted text preview: {truncate_for_log(extracted_text.strip(), 500)}",
+            ]),
+            "interpretation-trace",
+        )
+        if not extracted_text.strip():
+            log_error(
+                "\n".join([
+                    "Interpretation returned blank content",
+                    f"Pipeline: {pipeline_name or '(unknown)'}",
+                    f"Run: {run_number if run_number is not None else '(unknown)'}",
+                    f"Model: {text_model_option['model']}",
+                    f"Image count: {len(images)}",
+                    f"Images: {', '.join(path.name for path in images) if images else '(none)'}",
+                    f"Prompt preview: {truncate_for_log(prompt_text, 500)}",
+                    f"Response preview: {truncate_for_log(data, 1500)}",
+                ]),
+                "interpretation",
+            )
+        return extracted_text
 
 
-async def call_replicate(prompt: str, model: str, aspect_ratio: str) -> str:
+def require_description(description: Optional[str], pipeline_name: str, run_number: int) -> str:
+    normalized = (description or "").strip()
+    if normalized:
+        return normalized
+    raise Exception(
+        f"Intermediate prompt was blank for run {run_number} using {pipeline_name}. "
+        "Stopping before image generation."
+    )
+
+
+def require_extracted_concepts(concepts: Optional[str]) -> str:
+    normalized = (concepts or "").strip()
+    if normalized:
+        return normalized
+    raise Exception("Extracted concepts were blank. Stopping before interpretation.")
+
+
+async def compress_meaningful_difference(
+    previous_interpretations: list[str],
+    pipeline_name: str,
+    run_number: int,
+) -> str:
+    raw_history = "\n\n".join(
+        f"{idx + 1}. {item.strip()}"
+        for idx, item in enumerate(previous_interpretations)
+        if isinstance(item, str) and item.strip()
+    ).strip()
+    if not raw_history:
+        return ""
+
+    compressed = await call_claude(
+        [],
+        MEANINGFUL_DIFFERENCE_COMPRESSION_PROMPT.format(previous_interpretations=raw_history),
+        pipeline_name=f"{pipeline_name} Meaningful Difference Compression",
+        run_number=run_number,
+        prompt_kind="meaningfuldifference-compression",
+    )
+    normalized = (compressed or "").strip()
+    if normalized:
+        return normalized
+
+    log_error(
+        f"Meaningful-difference compression was blank for run {run_number} using {pipeline_name}. Falling back to raw history.",
+        "meaningfuldifference-compression",
+    )
+    return raw_history
+
+
+async def call_replicate(
+    prompt: str,
+    model: str,
+    aspect_ratio: str,
+    prompt_metadata: Optional[dict] = None,
+) -> str:
     """Send prompt to Replicate and return the output image URL."""
+    write_prompt_log(
+        "image-generation",
+        prompt,
+        metadata={
+            "provider": "replicate",
+            "model": model,
+            "aspect_ratio": aspect_ratio,
+            **(prompt_metadata or {}),
+        },
+    )
     payload = {
         "input": {
             "prompt": prompt,
@@ -762,7 +987,22 @@ def extract_openrouter_image_data_url(data: dict) -> str:
     raise Exception("OpenRouter image generation failed: no image content found in response")
 
 
-async def call_openrouter_image(prompt: str, model: str, aspect_ratio: str) -> str:
+async def call_openrouter_image(
+    prompt: str,
+    model: str,
+    aspect_ratio: str,
+    prompt_metadata: Optional[dict] = None,
+) -> str:
+    write_prompt_log(
+        "image-generation",
+        prompt,
+        metadata={
+            "provider": "openrouter",
+            "model": model,
+            "aspect_ratio": aspect_ratio,
+            **(prompt_metadata or {}),
+        },
+    )
     payload = {
         "model": model,
         "modalities": ["image", "text"],
@@ -967,10 +1207,11 @@ async def get_settings():
         "default_pipeline_id": get_default_pipeline_id(),
         "available_pipeline_ids": list_viable_pipeline_ids(),
         "debug_mode": get_debug_mode(),
+        "skip_image_generation": get_skip_image_generation(),
         "text_model": get_text_model(),
         "available_text_models": [
-            {"id": model_id, "label": label}
-            for model_id, label in TEXT_MODELS.items()
+            {"id": model_id, "label": option["label"]}
+            for model_id, option in TEXT_MODELS.items()
         ],
         "image_model": get_default_image_model(),
         "available_image_models": [
@@ -999,6 +1240,7 @@ async def update_settings(body: dict):
     save_config({
         "default_pipeline_id": pipeline_id,
         "debug_mode": bool((body or {}).get("debug_mode", False)),
+        "skip_image_generation": bool((body or {}).get("skip_image_generation", False)),
         "text_model": (body or {}).get("text_model")
         if (body or {}).get("text_model") in TEXT_MODELS
         else get_text_model(),
@@ -1022,6 +1264,7 @@ async def update_settings(body: dict):
         "ok": True,
         "default_pipeline_id": get_default_pipeline_id(),
         "debug_mode": get_debug_mode(),
+        "skip_image_generation": get_skip_image_generation(),
         "text_model": get_text_model(),
         "image_model": get_default_image_model(),
         "restore_settings": get_restore_settings(),
@@ -1077,6 +1320,29 @@ async def delete_image(filename: str):
 @app.get("/api/status")
 async def get_status():
     return pipeline_state
+
+
+@app.post("/api/cancel")
+async def cancel_pipeline():
+    global pipeline_task
+    if pipeline_state["status"] not in ("interpreting", "generating", "downloading") or pipeline_task is None:
+        raise HTTPException(400, "No active pipeline to cancel")
+
+    pipeline_state["cancel_requested"] = True
+    pipeline_state["status"] = "cancelling"
+    pipeline_state["message"] = "Cancelling current batch..."
+    pipeline_task.cancel()
+    return {"ok": True, "status": "cancelling"}
+
+
+@app.post("/api/meaningful-difference/clear")
+async def clear_meaningful_difference():
+    if pipeline_state["status"] in ("interpreting", "generating", "downloading", "cancelling"):
+        raise HTTPException(400, "Cannot clear meaningful difference while pipeline is running")
+
+    pipeline_state["interpretation_history"] = []
+    pipeline_state["meaningful_difference_text"] = ""
+    return {"ok": True}
 
 
 @app.get("/api/results")
@@ -1147,7 +1413,8 @@ async def import_library(file: UploadFile = File(...)):
 @app.post("/api/run")
 async def run_pipeline(body: dict):
     """Trigger the full pipeline."""
-    if pipeline_state["status"] not in ("idle", "complete", "error"):
+    global pipeline_task
+    if pipeline_state["status"] not in ("idle", "complete", "cancelled", "error"):
         raise HTTPException(400, "Pipeline is already running")
 
     selected_filenames = body.get("filenames") if body else None
@@ -1157,7 +1424,8 @@ async def run_pipeline(body: dict):
     image_model = (body.get("image_model") or get_default_image_model()).strip() if body else get_default_image_model()
     aspect_ratio = (body.get("aspect_ratio") or "3:4").strip() if body else "3:4"
     run_count = int((body.get("run_count") or 1)) if body else 1
-    rerun_interpretation = bool((body.get("rerun_interpretation") or False)) if body else False
+    cycle_pipelines = bool((body.get("cycle_pipelines") or False)) if body else False
+    encourage_variety = bool((body.get("encourage_variety") or False)) if body else False
     if not isinstance(selected_filenames, list) or not selected_filenames:
         raise HTTPException(400, "No images selected")
     if not pipeline_id:
@@ -1168,12 +1436,19 @@ async def run_pipeline(body: dict):
     if run_count < 1 or run_count > 20:
         raise HTTPException(400, "Run count must be between 1 and 20")
 
+    effective_cycle_pipelines = cycle_pipelines if run_count > 1 else False
+    effective_rerun_interpretation = run_count > 1
+    effective_encourage_variety = encourage_variety
+
     images = resolve_selected_images(selected_filenames)
     pipeline = load_pipeline(pipeline_id)
     if interpretation_prompt:
         pipeline["interpretation"] = interpretation_prompt
     if image_generation_prompt:
         pipeline["image"] = image_generation_prompt
+
+    existing_interpretation_history = list(pipeline_state.get("interpretation_history") or [])
+    existing_meaningful_difference_text = pipeline_state.get("meaningful_difference_text") or ""
 
     # Reset state
     pipeline_state.update({
@@ -1191,10 +1466,27 @@ async def run_pipeline(body: dict):
         "run_count": run_count,
         "completed_runs": 0,
         "current_run": 0,
-        "rerun_interpretation": rerun_interpretation if run_count > 1 else False,
+        "rerun_interpretation": effective_rerun_interpretation,
+        "cycle_pipelines": effective_cycle_pipelines,
+        "encourage_variety": effective_encourage_variety,
+        "interpretation_history": existing_interpretation_history,
+        "meaningful_difference_text": existing_meaningful_difference_text,
+        "extracted_concepts": "",
+        "cancel_requested": False,
     })
 
-    asyncio.create_task(_run_pipeline(images, pipeline, image_model_option, aspect_ratio, run_count, rerun_interpretation))
+    pipeline_task = asyncio.create_task(
+        _run_pipeline(
+            images,
+            pipeline,
+            image_model_option,
+            aspect_ratio,
+            run_count,
+            effective_rerun_interpretation,
+            effective_cycle_pipelines,
+            effective_encourage_variety,
+        )
+    )
 
     return {"ok": True, "status": "interpreting", "image_count": len(images), "run_count": run_count}
 
@@ -1205,33 +1497,150 @@ async def _run_pipeline(
     aspect_ratio: str,
     run_count: int,
     rerun_interpretation: bool,
+    cycle_pipelines: bool,
+    encourage_variety: bool,
 ):
     """Run interpretation and generation end-to-end."""
+    global pipeline_task
     try:
         description = None
+        interpretation_history: list[str] = list(pipeline_state.get("interpretation_history") or [])
+        meaningful_difference_text = pipeline_state.get("meaningful_difference_text") or ""
+        extracted_concepts = ""
+        skip_image_generation = get_skip_image_generation()
+        pipeline_ids = list_viable_pipeline_ids()
+        current_index = pipeline_ids.index(pipeline["id"]) if pipeline["id"] in pipeline_ids else 0
+
+        pipeline_state["status"] = "interpreting"
+        pipeline_state["message"] = f"Extracting concepts from {len(images)} source image(s)..."
+        extracted_concepts = await call_claude(
+            images,
+            EXTRACTED_CONCEPTS_PROMPT,
+            pipeline_name="Extracted Concepts",
+            run_number=0,
+            prompt_kind="extracted-concepts",
+        )
+        extracted_concepts = require_extracted_concepts(extracted_concepts)
+        pipeline_state["extracted_concepts"] = extracted_concepts
 
         for run_index in range(run_count):
+            active_pipeline = pipeline
+            if cycle_pipelines and pipeline_ids:
+                active_pipeline_id = pipeline_ids[(current_index + run_index) % len(pipeline_ids)]
+                active_pipeline = load_pipeline(active_pipeline_id)
+            pipeline_state["pipeline_id"] = active_pipeline["id"]
             pipeline_state["current_run"] = run_index + 1
             if run_index == 0 or rerun_interpretation:
                 pipeline_state["status"] = "interpreting"
+                resolved_interpretation_prompt = active_pipeline["interpretation"].replace(
+                    EXTRACTED_CONCEPTS_TOKEN,
+                    extracted_concepts,
+                )
+                meaningful_difference_text = ""
+                meaningful_difference_sources: list[str] = []
+                should_inject_meaningful_difference = (
+                    encourage_variety
+                    and MEANINGFUL_DIFFERENCE_TOKEN in active_pipeline["interpretation"]
+                )
+                if should_inject_meaningful_difference and interpretation_history:
+                    meaningful_difference_sources.extend(interpretation_history)
+                if should_inject_meaningful_difference and meaningful_difference_sources:
+                    pipeline_state["message"] = (
+                        f"Compressing previous interpretations for run {run_index + 1} of {run_count}..."
+                    )
+                    meaningful_difference_text = await compress_meaningful_difference(
+                        meaningful_difference_sources,
+                        active_pipeline["name"],
+                        run_index + 1,
+                    )
+                resolved_interpretation_prompt = resolved_interpretation_prompt.replace(
+                    MEANINGFUL_DIFFERENCE_TOKEN,
+                    meaningful_difference_text,
+                )
+                pipeline_state["meaningful_difference_text"] = meaningful_difference_text
                 if run_count > 1 and rerun_interpretation:
                     pipeline_state["message"] = (
-                        f"Interpreting source images for run {run_index + 1} of {run_count}..."
+                        f"Creating intermediate prompt for run {run_index + 1} of {run_count} with {active_pipeline['name']}..."
                     )
                 else:
-                    pipeline_state["message"] = f"Claude is interpreting {len(images)} image(s)..."
-                description = await call_claude(images, pipeline["interpretation"])
+                    pipeline_state["message"] = f"Creating intermediate prompt for run {run_index + 1} with {active_pipeline['name']}..."
+                description = await call_claude(
+                    [],
+                    resolved_interpretation_prompt,
+                    pipeline_name=active_pipeline["name"],
+                    run_number=run_index + 1,
+                    encourage_variety=encourage_variety,
+                    previous_interpretations=interpretation_history,
+                    meaningful_difference_text=meaningful_difference_text,
+                    prompt_kind="intermediate-prompt",
+                )
+                description = require_description(description, active_pipeline["name"], run_index + 1)
                 pipeline_state["description"] = description
+                interpretation_history.append(description)
+                pipeline_state["interpretation_history"] = list(interpretation_history)
 
-            image_prompt = pipeline["image"].replace("{description}", description or "")
+            description = require_description(description, active_pipeline["name"], run_index + 1)
+
+            image_prompt = active_pipeline["image"].replace("{description}", description or "")
+            if skip_image_generation:
+                pipeline_state["status"] = "generating"
+                pipeline_state["message"] = (
+                    f"Skipped image generation for run {run_index + 1} of {run_count}."
+                )
+                pipeline_state["completed_runs"] = run_index + 1
+                write_prompt_log(
+                    "image-generation-skipped",
+                    image_prompt,
+                    metadata={
+                        "pipeline_id": active_pipeline["id"],
+                        "pipeline_name": active_pipeline["name"],
+                        "run_number": run_index + 1,
+                        "run_count": run_count,
+                        "image_model": pipeline_state["image_model"],
+                        "aspect_ratio": aspect_ratio,
+                    },
+                )
+                if should_inject_meaningful_difference:
+                    pipeline_state["message"] = (
+                        f"Updating meaningful difference after run {run_index + 1} of {run_count}..."
+                    )
+                    meaningful_difference_text = await compress_meaningful_difference(
+                        interpretation_history,
+                        active_pipeline["name"],
+                        run_index + 1,
+                    )
+                    pipeline_state["meaningful_difference_text"] = meaningful_difference_text
+                continue
             pipeline_state["status"] = "generating"
             pipeline_state["message"] = (
-                f"Generating image {run_index + 1} of {run_count} with {image_model_option['label']}..."
+                f"Generating image {run_index + 1} of {run_count} with {active_pipeline['name']} via {image_model_option['label']}..."
             )
             if image_model_option["provider"] == "replicate":
-                image_result = await call_replicate(image_prompt, image_model_option["model"], aspect_ratio)
+                image_result = await call_replicate(
+                    image_prompt,
+                    image_model_option["model"],
+                    aspect_ratio,
+                    prompt_metadata={
+                        "pipeline_id": active_pipeline["id"],
+                        "pipeline_name": active_pipeline["name"],
+                        "run_number": run_index + 1,
+                        "run_count": run_count,
+                        "image_model": pipeline_state["image_model"],
+                    },
+                )
             else:
-                image_result = await call_openrouter_image(image_prompt, image_model_option["model"], aspect_ratio)
+                image_result = await call_openrouter_image(
+                    image_prompt,
+                    image_model_option["model"],
+                    aspect_ratio,
+                    prompt_metadata={
+                        "pipeline_id": active_pipeline["id"],
+                        "pipeline_name": active_pipeline["name"],
+                        "run_number": run_index + 1,
+                        "run_count": run_count,
+                        "image_model": pipeline_state["image_model"],
+                    },
+                )
 
             pipeline_state["status"] = "downloading"
             pipeline_state["message"] = f"Saving image {run_index + 1} of {run_count}..."
@@ -1243,11 +1652,12 @@ async def _run_pipeline(
                 image_model_option["provider"],
                 filename,
                 metadata={
-                    "pipeline_id": pipeline["id"],
-                    "pipeline_name": pipeline["name"],
-                    "interpretation_prompt": pipeline["interpretation"],
+                    "pipeline_id": active_pipeline["id"],
+                    "pipeline_name": active_pipeline["name"],
+                    "interpretation_prompt": active_pipeline["interpretation"],
                     "description": description,
-                    "image_generation_prompt": pipeline["image"],
+                    "extracted_concepts": extracted_concepts,
+                    "image_generation_prompt": active_pipeline["image"],
                     "resolved_image_generation_prompt": image_prompt,
                     "image_model": pipeline_state["image_model"],
                     "image_provider": image_model_option["provider"],
@@ -1260,14 +1670,36 @@ async def _run_pipeline(
             pipeline_state["poster_filename"] = filename
             pipeline_state["poster_filenames"].append(filename)
             pipeline_state["completed_runs"] = run_index + 1
+            if should_inject_meaningful_difference:
+                pipeline_state["message"] = (
+                    f"Updating meaningful difference after run {run_index + 1} of {run_count}..."
+                )
+                meaningful_difference_text = await compress_meaningful_difference(
+                    interpretation_history,
+                    active_pipeline["name"],
+                    run_index + 1,
+                )
+                pipeline_state["meaningful_difference_text"] = meaningful_difference_text
 
         pipeline_state["status"] = "complete"
-        pipeline_state["message"] = f"Finished {run_count} run{'s' if run_count != 1 else ''}"
+        if skip_image_generation:
+            pipeline_state["message"] = f"Finished {run_count} run{'s' if run_count != 1 else ''} with image generation skipped"
+        else:
+            pipeline_state["message"] = f"Finished {run_count} run{'s' if run_count != 1 else ''}"
+        pipeline_state["cancel_requested"] = False
+    except asyncio.CancelledError:
+        pipeline_state["status"] = "cancelled"
+        pipeline_state["message"] = "Cancelled"
+        pipeline_state["cancel_requested"] = False
+        raise
     except Exception as e:
         log_error(str(e), "pipeline")
         pipeline_state["status"] = "error"
         pipeline_state["error"] = str(e)
         pipeline_state["message"] = f"Error: {e}"
+        pipeline_state["cancel_requested"] = False
+    finally:
+        pipeline_task = None
 
 
 # --- Serve output images ---

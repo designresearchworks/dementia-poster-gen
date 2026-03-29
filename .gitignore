@@ -10,3 +10,6 @@ output/*
 
 watch/*
 !watch/.gitkeep
+
+Prompt Logs/*
+!Prompt Logs/.gitkeep

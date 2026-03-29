@@ -127,6 +127,12 @@ body {
   margin-bottom: 0.4rem;
 }
 
+.status-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
 .card-header h2 {
   margin-bottom: 0;
 }
@@ -337,6 +343,15 @@ body {
 
 .run-option-toggle {
   margin-top: -0.1rem;
+  margin-bottom: 0.65rem;
+}
+
+.run-option-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
   margin-bottom: 0.65rem;
 }
 
@@ -743,6 +758,14 @@ textarea {
   padding: 0.55rem 0.65rem;
   margin: 0.45rem 0;
   white-space: pre-wrap;
+}
+
+.prompt-token-chip-title {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+  color: var(--text-muted);
 }
 
 .prompt-editor-spacer {
