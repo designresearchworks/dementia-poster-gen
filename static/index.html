@@ -13,32 +13,105 @@
   <main class="pipeline-flow">
     <div class="card card-status status-monitor" id="status-card">
       <div class="card-header">
-        <div class="status-indicator" id="status-indicator">
-          <span class="status-dot" id="status-dot"></span>
-          <span class="status-text" id="status-text">Idle</span>
+        <div>
+          <h2>Setup</h2>
         </div>
         <div class="status-actions">
-          <button id="btn-cancel" class="btn-text" type="button" hidden>Cancel</button>
           <button id="btn-settings" class="btn-icon" title="Settings">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
       </div>
-      <p class="status-message" id="status-message"></p>
-      <div id="debug-bar" class="debug-bar" hidden>
-        <span id="debug-summary" class="debug-summary">Debug mode on</span>
-        <div class="debug-actions">
-          <button id="btn-debug-details" class="btn-text" type="button">Details</button>
-          <button id="btn-debug-clear-inline" class="btn-text" type="button">Clear</button>
+      <div class="status-watch-grid">
+        <label class="settings-toggle status-toggle" for="watcher-enabled-toggle">
+          <input id="watcher-enabled-toggle" type="checkbox">
+          <span>Automatically process watched folder</span>
+        </label>
+        <div class="status-folder-control">
+          <input id="watched-folder-input" class="text-input" type="text" spellcheck="false" placeholder="/watch" readonly title="Click to choose watched folder">
         </div>
+      </div>
+      <div class="status-watch-grid">
+        <label class="settings-toggle status-toggle" for="settings-send-to-printer">
+          <input id="settings-send-to-printer" type="checkbox">
+          <span>Send to printer</span>
+        </label>
+        <div class="status-folder-control">
+          <select id="settings-printer-name" class="pipeline-select"></select>
+        </div>
+      </div>
+      <div class="status-primary-grid">
+        <div class="status-setting">
+          <label class="settings-label" for="settings-default-pipeline">Active Pipeline</label>
+          <select id="settings-default-pipeline" class="pipeline-select"></select>
+        </div>
+        <div class="status-setting">
+          <label class="settings-label" for="settings-text-model">LLM</label>
+          <select id="settings-text-model" class="pipeline-select">
+            <option value="anthropic/claude-opus-4.6">Claude Opus 4.6</option>
+            <option value="anthropic/claude-opus-4.6:reasoning">Claude Opus 4.6 (Reasoning)</option>
+            <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6</option>
+            <option value="anthropic/claude-sonnet-4.6:reasoning">Claude Sonnet 4.6 (Reasoning)</option>
+            <option value="anthropic/claude-haiku-4.5">Claude Haiku 4.5</option>
+          </select>
+        </div>
+        <div class="status-setting">
+          <label class="settings-label" for="settings-image-model">Image model</label>
+          <select id="settings-image-model" class="pipeline-select">
+            <option value="replicate:google/nano-banana-pro">Nano Banana Pro (Replicate)</option>
+            <option value="replicate:google/imagen-4-ultra">Imagen 4 Ultra (Replicate)</option>
+            <option value="replicate:google/nano-banana">Nano Banana (Replicate)</option>
+            <option value="replicate:google/nano-banana-2">Nano Banana 2 (Replicate)</option>
+            <option value="replicate:black-forest-labs/flux-2-pro">FLUX.2 Pro (Replicate)</option>
+            <option value="replicate:openai/gpt-image-1.5">GPT Image 1.5 (Replicate)</option>
+            <option value="replicate:openai/gpt-image-2">GPT Image 2.0 (Replicate)</option>
+          </select>
+        </div>
+        <div class="status-setting">
+          <label class="settings-label" for="aspect-ratio-select">Aspect ratio</label>
+          <select id="aspect-ratio-select" class="pipeline-select">
+            <option value="1:1">1:1</option>
+            <option value="3:4" selected>3:4</option>
+            <option value="4:3">4:3</option>
+            <option value="9:16">9:16</option>
+            <option value="16:9">16:9</option>
+          </select>
+        </div>
+      </div>
+      <div class="status-batch-grid">
+        <div class="status-setting">
+          <label class="settings-label" for="run-count">Batches per job</label>
+          <input id="run-count" class="text-input run-count-input" type="number" min="1" max="20" step="1" value="1" aria-label="Number of runs">
+        </div>
+      </div>
+      <div class="status-bottom-grid">
+        <label id="encourage-variety-within-batches-toggle" class="settings-toggle status-setting-toggle-row">
+          <input id="encourage-variety-within-batches" type="checkbox">
+          <span>Encourage variety within batches</span>
+        </label>
+        <div class="status-setting-toggle-row status-setting-toggle-inline">
+          <label class="settings-toggle">
+            <input id="encourage-variety-across-session" type="checkbox">
+            <span>Encourage variety across session</span>
+          </label>
+          <button id="btn-clear-meaningful-difference" class="btn-inline-link btn-inline-muted" type="button">(clear memory)</button>
+        </div>
+        <label class="settings-toggle status-setting-toggle-row">
+          <input id="settings-skip-image-generation" type="checkbox">
+          <span>Skip image generation</span>
+        </label>
       </div>
     </div>
 
     <section class="stage-card" id="stage-input">
       <div class="card card-images">
         <div class="card-header">
-          <h2>Input Images</h2>
-          <button id="btn-toggle-input-row" class="btn-text" type="button" aria-expanded="true">Collapse</button>
+          <h2>Manual Control</h2>
+          <button id="btn-toggle-input-row" class="btn-icon btn-collapse-toggle" type="button" aria-expanded="true" aria-label="Collapse manual control" title="Collapse manual control">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>
+          </button>
         </div>
         <div id="input-board" class="input-board">
           <section class="input-subsection">
@@ -79,55 +152,43 @@
               <p class="empty-state">No images found.</p>
             </div>
           </section>
+          <section class="input-subsection input-subsection-run">
+            <h3 class="input-subtitle">Run Pipeline</h3>
+            <button id="btn-run" class="btn-run btn-run-manual">Run Pipeline</button>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="stage-card" id="stage-job-browser">
+      <div class="card card-job-browser">
+        <div class="card-header">
+          <h2>Job Browser</h2>
+          <button id="btn-toggle-job-browser" class="btn-icon btn-collapse-toggle" type="button" aria-expanded="true" aria-label="Collapse job browser" title="Collapse job browser">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>
+          </button>
+        </div>
+        <div id="job-browser-grid" class="job-history-list">
+          <p class="empty-state">No jobs yet.</p>
         </div>
       </div>
     </section>
 
     <section class="stage-card" id="stage-interpretation">
       <div class="card card-prompt">
-        <h2>Pipeline</h2>
-        <div class="stage-actions interpretation-actions">
-          <select id="aspect-ratio-select" class="pipeline-select stage-select">
-            <option value="1:1">1:1</option>
-            <option value="3:4" selected>3:4</option>
-            <option value="4:3">4:3</option>
-            <option value="9:16">9:16</option>
-            <option value="16:9">16:9</option>
-          </select>
-          <button id="btn-run" class="btn-run">Run Pipeline</button>
-          <input id="run-count" class="text-input run-count-input" type="number" min="1" max="20" step="1" value="1" aria-label="Number of runs">
-        </div>
-        <label id="cycle-pipelines-toggle" class="settings-toggle run-option-toggle" hidden>
-          <input id="cycle-pipelines" type="checkbox">
-          <span>Cycle pipelines</span>
-        </label>
-        <div id="encourage-variety-toggle" class="run-option-inline" hidden>
-          <label class="settings-toggle run-option-toggle">
-            <input id="encourage-variety" type="checkbox">
-            <span>Encourage variety</span>
-          </label>
-          <button id="btn-clear-meaningful-difference" class="btn-text" type="button">Clear</button>
-        </div>
-        <div class="card-controls-inline">
-          <button id="btn-open-pipeline-editor" class="btn-text" type="button">Add/Edit Pipeline</button>
-        </div>
-        <select id="pipeline-select" class="pipeline-select"></select>
-        <p id="pipeline-path" class="pipeline-path"></p>
+        <h2>Interpretation Prompt</h2>
+        <select id="pipeline-select" class="pipeline-select" hidden></select>
+        <p id="pipeline-path" class="pipeline-path" hidden></p>
         <textarea id="prompt-interpretation" rows="6" spellcheck="false" hidden></textarea>
         <div id="prompt-interpretation-editor" class="prompt-token-editor" contenteditable="true" spellcheck="false" aria-label="Pipeline prompt editor"></div>
       </div>
     </section>
 
-    <section class="stage-card" id="stage-meaningful-difference">
-      <div class="card card-description">
-        <h2>Meaningful Difference</h2>
-        <textarea id="meaningful-difference-editor" class="description-editor" rows="6" spellcheck="false" readonly placeholder="Meaningful-difference text will appear here when available."></textarea>
-      </div>
-    </section>
-
     <section class="stage-card" id="stage-description">
       <div class="card card-description" id="description-card">
-        <h2>Intermediate Prompt</h2>
+        <h2>Output of Interpretation Prompt</h2>
         <textarea id="description-editor" class="description-editor" rows="8" spellcheck="true" placeholder="Run interpretation to generate a description draft."></textarea>
       </div>
     </section>
@@ -140,11 +201,51 @@
       </div>
     </section>
 
-    <div class="row-resize-handle" id="resize-handle-bottom" role="separator" aria-orientation="horizontal" aria-label="Resize bottom row"></div>
+    <section class="stage-card" id="stage-meaningful-difference">
+      <div class="card card-description">
+        <div class="card-header">
+          <h2>Variety Guidance <button id="btn-clear-meaningful-difference-header" class="btn-inline-link btn-inline-muted" type="button">(clear memory)</button></h2>
+          <button id="btn-toggle-meaningful-difference" class="btn-icon btn-collapse-toggle" type="button" aria-expanded="true" aria-label="Collapse variety guidance" title="Collapse variety guidance">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>
+          </button>
+        </div>
+        <textarea id="meaningful-difference-editor" class="description-editor" rows="1" spellcheck="false" readonly placeholder="Batch and session variety guidance will appear here when available."></textarea>
+      </div>
+    </section>
 
-    <div class="card card-library">
+    <section class="stage-card" id="stage-system-log">
+      <div class="card card-system-log">
+        <div class="card-header system-log-header">
+          <div class="system-log-header-top">
+            <h2>System Log</h2>
+            <button id="btn-toggle-system-log" class="btn-icon btn-collapse-toggle" type="button" aria-expanded="true" aria-label="Collapse system log" title="Collapse system log">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="18 15 12 9 6 15"></polyline>
+              </svg>
+            </button>
+          </div>
+          <div class="card-controls system-log-toolbar">
+            <button id="btn-system-log-jump" class="btn-text" type="button" hidden>Jump to Latest</button>
+            <button id="btn-system-log-pause" class="btn-text" type="button">Pause</button>
+            <button id="btn-system-log-clear" class="btn-text" type="button">Clear</button>
+          </div>
+        </div>
+        <div id="system-log-list" class="system-log-list">
+          <p class="empty-state">No system events yet.</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="card card-library" id="stage-library">
       <div class="card-header">
         <h2>Library</h2>
+        <button id="btn-toggle-library" class="btn-icon btn-collapse-toggle" type="button" aria-expanded="true" aria-label="Collapse library" title="Collapse library">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="18 15 12 9 6 15"></polyline>
+          </svg>
+        </button>
       </div>
       <div id="library-grid" class="library-grid">
         <p class="empty-state">No generated posters yet.</p>
@@ -162,63 +263,26 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
-        <p class="card-hint">Choose which pipeline should load by default.</p>
-        <label class="settings-label" for="settings-default-pipeline">Default pipeline</label>
-        <select id="settings-default-pipeline" class="pipeline-select"></select>
-        <label class="settings-label" for="settings-text-model">Interpretation model</label>
-        <select id="settings-text-model" class="pipeline-select">
-          <option value="anthropic/claude-opus-4.6">Claude Opus 4.6</option>
-          <option value="anthropic/claude-opus-4.6:reasoning">Claude Opus 4.6 (Reasoning)</option>
-          <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6</option>
-          <option value="anthropic/claude-sonnet-4.6:reasoning">Claude Sonnet 4.6 (Reasoning)</option>
-          <option value="anthropic/claude-haiku-4.5">Claude Haiku 4.5</option>
-        </select>
-        <label class="settings-label" for="settings-image-model">Image model</label>
-        <select id="settings-image-model" class="pipeline-select">
-          <option value="replicate:google/nano-banana-pro">Nano Banana Pro (Replicate)</option>
-          <option value="replicate:google/imagen-4-ultra">Imagen 4 Ultra (Replicate)</option>
-          <option value="replicate:google/nano-banana">Nano Banana (Replicate)</option>
-          <option value="replicate:google/nano-banana-2">Nano Banana 2 (Replicate)</option>
-          <option value="replicate:black-forest-labs/flux-2-pro">FLUX.2 Pro (Replicate)</option>
-          <option value="replicate:openai/gpt-image-1.5">GPT Image 1.5 (Replicate)</option>
-        </select>
+        <p class="card-hint">Secondary system settings and library tools.</p>
         <label class="settings-toggle">
-          <input id="settings-debug-mode" type="checkbox">
-          <span>Enable debug mode</span>
-        </label>
-        <label class="settings-toggle">
-          <input id="settings-skip-image-generation" type="checkbox">
-          <span>Skip image generation</span>
+          <input id="settings-http-access-logging" type="checkbox">
+          <span>Show HTTP access logs in terminal</span>
         </label>
         <div class="settings-group">
-          <p class="settings-label">Meta data included in restore from library</p>
-          <label class="settings-toggle">
-            <input id="settings-restore-interpretation" type="checkbox">
-            <span>Interpretation prompt</span>
-          </label>
-          <label class="settings-toggle">
-            <input id="settings-restore-description" type="checkbox">
-            <span>Description</span>
-          </label>
-          <label class="settings-toggle">
-            <input id="settings-restore-image-prompt" type="checkbox">
-            <span>Image generation prompt</span>
-          </label>
-          <label class="settings-toggle">
-            <input id="settings-restore-image-model" type="checkbox">
-            <span>Active Image Model</span>
-          </label>
-          <label class="settings-toggle">
-            <input id="settings-restore-aspect-ratio" type="checkbox">
-            <span>Aspect ratio</span>
-          </label>
+          <p class="settings-label">Data Backup/Restore</p>
+          <div class="settings-transfer-actions">
+            <button id="btn-library-export" class="btn-secondary" type="button">Export</button>
+            <input id="library-import-input" type="file" accept=".zip,application/zip" hidden>
+            <button id="btn-library-import" class="btn-secondary" type="button">Import</button>
+          </div>
         </div>
         <div class="settings-group">
-          <p class="settings-label">Library Transfer</p>
+          <p class="settings-label">config.json</p>
+          <p class="card-hint">Advanced editor for the live config file. Reset writes the built-in default config back to disk.</p>
+          <textarea id="settings-config-editor" class="pipeline-editor-textarea settings-config-editor" spellcheck="false"></textarea>
           <div class="settings-transfer-actions">
-            <button id="btn-library-export" class="btn-secondary" type="button">Export Library</button>
-            <input id="library-import-input" type="file" accept=".zip,application/zip" hidden>
-            <button id="btn-library-import" class="btn-secondary" type="button">Import Library</button>
+            <button id="btn-config-save" class="btn-secondary" type="button">Save config.json</button>
+            <button id="btn-config-reset" class="btn-secondary" type="button">Reset to Default</button>
           </div>
         </div>
         <div class="modal-actions">
@@ -248,6 +312,43 @@
     </div>
   </div>
 
+  <div id="job-json-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="job-json-backdrop"></div>
+    <div class="modal-dialog modal-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="job-json-title">
+      <div class="card modal-card">
+        <div class="card-header">
+          <h2 id="job-json-title">Job JSON</h2>
+          <button id="btn-job-json-close" class="btn-icon" title="Close job JSON">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <pre id="job-json-content" class="job-json-content">Loading…</pre>
+      </div>
+    </div>
+  </div>
+
+  <div id="asset-preview-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="asset-preview-backdrop"></div>
+    <div class="modal-dialog modal-dialog-image" role="dialog" aria-modal="true" aria-labelledby="asset-preview-title">
+      <div class="card modal-card image-modal-card">
+        <div class="card-header">
+          <h2 id="asset-preview-title">Image Preview</h2>
+          <button id="btn-asset-preview-close" class="btn-icon" title="Close image preview">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div id="asset-preview-body" class="output-modal-body">
+          <p class="empty-state">No image available.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="job-hover-preview" class="job-hover-preview" hidden>
+    <div id="job-hover-preview-title" class="job-hover-preview-title">Preview</div>
+    <img id="job-hover-preview-image" class="job-hover-preview-image" alt="Job preview">
+  </div>
+
   <div id="output-modal" class="modal" hidden>
     <div class="modal-backdrop" id="output-backdrop"></div>
     <div class="modal-dialog modal-dialog-image" role="dialog" aria-modal="true" aria-labelledby="output-title">
@@ -255,6 +356,7 @@
         <div class="card-header">
           <h2 id="output-title">Generated Output</h2>
           <div class="card-controls">
+            <button id="btn-output-reprint" class="btn-secondary" type="button">Reprint</button>
             <button id="btn-output-reload" class="btn-secondary" type="button">Reload meta-data</button>
             <button id="btn-output-prev" class="btn-icon" title="Previous poster" type="button">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -274,17 +376,63 @@
     </div>
   </div>
 
+  <div id="metadata-import-modal" class="modal" hidden>
+    <div class="modal-backdrop" id="metadata-import-backdrop"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="metadata-import-title">
+      <div class="card modal-card">
+        <div class="card-header">
+          <h2 id="metadata-import-title">Import From Job Metadata</h2>
+          <button id="btn-metadata-import-close" class="btn-icon" title="Close metadata import">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p class="card-hint">Choose which fields from this job’s JSON should be restored into the current app state.</p>
+        <label class="settings-toggle">
+          <input id="metadata-import-pipeline" type="checkbox" checked>
+          <span>Pipeline</span>
+        </label>
+        <label class="settings-toggle">
+          <input id="metadata-import-interpretation" type="checkbox" checked>
+          <span>Interpretation prompt</span>
+        </label>
+        <label class="settings-toggle">
+          <input id="metadata-import-concepts" type="checkbox" checked>
+          <span>Extracted concepts</span>
+        </label>
+        <label class="settings-toggle">
+          <input id="metadata-import-description" type="checkbox" checked>
+          <span>Intermediate prompt</span>
+        </label>
+        <label class="settings-toggle">
+          <input id="metadata-import-image-prompt" type="checkbox" checked>
+          <span>Image generation prompt</span>
+        </label>
+        <label class="settings-toggle">
+          <input id="metadata-import-image-model" type="checkbox" checked>
+          <span>Image model</span>
+        </label>
+        <label class="settings-toggle">
+          <input id="metadata-import-aspect-ratio" type="checkbox" checked>
+          <span>Aspect ratio</span>
+        </label>
+        <div class="modal-actions">
+          <button id="btn-metadata-import-apply" class="btn-run" type="button">Import Selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="pipeline-editor-modal" class="modal" hidden>
     <div class="modal-backdrop" id="pipeline-editor-backdrop"></div>
     <div class="modal-dialog modal-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="pipeline-editor-title">
       <div class="card modal-card pipeline-editor-card">
         <div class="card-header">
-          <h2 id="pipeline-editor-title">Pipeline Editor</h2>
+          <h2 id="pipeline-editor-title">Pipeline Viewer</h2>
           <button id="btn-pipeline-editor-close" class="btn-icon" title="Close pipeline editor">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
-        <p class="card-hint">Edit a pipeline Markdown file directly or create a new one from boilerplate.</p>
+        <p class="card-hint">Pipeline Markdown is shown here for reference only. Browser editing is disabled to protect the source files in <code>/pipelines</code>.</p>
         <div class="pipeline-editor-toolbar">
           <div class="pipeline-editor-select-group">
             <label class="settings-label" for="pipeline-editor-select">Pipeline</label>
@@ -301,7 +449,7 @@
         <p id="pipeline-editor-path" class="pipeline-path"></p>
         <textarea id="pipeline-editor-textarea" class="pipeline-editor-textarea" spellcheck="false"></textarea>
         <div class="modal-actions">
-          <button id="btn-pipeline-editor-save" class="btn-run" type="button">Save Pipeline</button>
+          <button id="btn-pipeline-editor-save" class="btn-run" type="button">Read Only</button>
         </div>
       </div>
     </div>

@@ -22,12 +22,8 @@ No patronising ideas!
 Only output the prompt for the image generator
 
 
-### Meaningful Differences
-
-Ensure the product does not involve (if this list is blank, then just continue):
-
-{meaningfuldifference}
-
 ## Image Generation Prompt
 
-sketch/blueprint:{description}keep it quite simple, without too many labels, we want it to be comprehensible at a glance. Do include a title.
+{description}
+
+keep it quite simple, without too many labels, we want it to be comprehensible at a glance. Do include a title.

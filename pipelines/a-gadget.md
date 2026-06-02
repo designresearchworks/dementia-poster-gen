@@ -1,22 +1,18 @@
-# A Gadget
+# Gadget Sketch
 
 ## Interpretation Prompt
 
-Consider these ideas {extracted-concepts}. Imagine a product. It's a physical device. It is inspired these ideas. It might assist people living with dementia or caring for people with dementia (who provided those words), or somehow enhance the life of someone who is interested in the words you are looking at. Really think what these words could mean for a gadget? Be innovative, original, and imaginative, even poetic with a vivid description. Include at the end a tagline that describes the product in just a few brief words: "Tagline: [the brief description]". Just output a prompt for an image generator that descibes the sketch that visualises this idea.
+Imagine a gadget built around these ideas {extracted-concepts}. Be innovative, original, and imaginative, even poetic with a vivid description. Your output should be prompt for an image generator that descibes a pencil or chalk sketch that visualises the gadget. What is this gadget for? How does it work? What problem will it help solve, or opportunity will it unlock? Describe a sketch of this gadget, with simple annotations so I can understand the concept. 
 
 ### rules
 
 Do not write markdown
 Do not write lists
-Describe a sketchy visualisation of the product
+Describe a colorful sketch visualisation of the design, product or device
 Keep to a maximum of 150 words
-
-### Meaningful Differences
-
-Ensure the product does not involve (if this list is blank, then just continue):
-
-{meaningfuldifference}
+Add an appropriate tagline at the end, summing it up in one line Tagline: [tagline]
+Keep text on the sketch minimal, a few words to indicate key points, but it should readable at a glance and mostly be visual
 
 ## Image Generation Prompt
 
-An artful and skillfully created hand-drawn sketch of a gadget. Minimal or no annotations, but do include the tagline.{description}
+{description}

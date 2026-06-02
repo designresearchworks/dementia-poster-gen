@@ -1,0 +1,22 @@
+{
+  "default_pipeline_id": "blueprint",
+  "debug_mode": false,
+  "skip_image_generation": false,
+  "watcher_enabled": true,
+  "watched_folder": "watch/",
+  "text_model": "anthropic/claude-opus-4.6",
+  "image_model": "replicate:google/nano-banana-2",
+  "aspect_ratio": "1:1",
+  "run_count": 4,
+  "http_access_logging": false,
+  "printer_name": "",
+  "send_to_printer": false,
+  "print_orientation": "portrait",
+  "print_fit_mode": "default",
+  "encourage_variety_within_batches": true,
+  "encourage_variety_across_session": false,
+  "variety_compression_prompt": "You will be given earlier interpretations of an idea. Create a list of the key ideas that were in the earlier interpretations, no more than 5-10 ideas in the list, choose words that capture the spirit of the previous interpretations best. Output without any markdown or headers \n\n<previousinterpretations>\n{previous_interpretations}\n</previousinterpretations>",
+  "layout": {
+    "content_row_height": 585
+  }
+}
